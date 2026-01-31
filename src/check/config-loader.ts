@@ -9,8 +9,13 @@ const CONFIG_FILENAME = ".chaperone.json";
  */
 export function loadConfig(cwd: string, configPath?: string): ChaperoneConfig {
   const resolvedPath = configPath ? resolve(cwd, configPath) : join(cwd, CONFIG_FILENAME);
+  const isExplicitPath = !!configPath;
 
   if (!existsSync(resolvedPath)) {
+    if (isExplicitPath) {
+      // Error if user explicitly specified a config that doesn't exist
+      throw new Error(`Config file not found: ${resolvedPath}`);
+    }
     // Return default config if no config file exists
     return { ...DEFAULT_CONFIG };
   }

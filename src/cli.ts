@@ -61,6 +61,7 @@ interface CheckArgs {
   copy?: boolean;
   noProgress?: boolean;
   noWarnings?: boolean;
+  help?: boolean;
 }
 
 function parseCheckArgs(args: string[]): CheckArgs {
@@ -70,6 +71,11 @@ function parseCheckArgs(args: string[]): CheckArgs {
     const arg = args[i];
 
     switch (arg) {
+      case "--help":
+      case "-h":
+        result.help = true;
+        break;
+
       case "--config":
       case "-c":
         result.config = args[++i];
@@ -110,8 +116,38 @@ function parseCheckArgs(args: string[]): CheckArgs {
   return result;
 }
 
+const CHECK_HELP_TEXT = `
+chaperone check - Check codebase for convention violations
+
+USAGE:
+  chaperone check [options]
+
+OPTIONS:
+  --config, -c <path>   Config file path (default: .chaperone.json)
+  --cwd <path>          Working directory (default: current directory)
+  --fix                 Auto-fix issues where possible
+  --format, -f <type>   Output format: text, json, ai (default: text)
+  --quiet, -q           Only show errors
+  --no-warnings         Hide warnings, show only errors
+  --copy                Copy remaining errors to clipboard (AI format)
+  --no-progress         Disable progress spinner
+  --help, -h            Show this help message
+
+EXAMPLES:
+  chaperone check
+  chaperone check --fix
+  chaperone check --format json
+  chaperone check --fix --copy
+`;
+
 async function runCheck(args: string[]): Promise<number> {
   const parsedArgs = parseCheckArgs(args);
+
+  if (parsedArgs.help) {
+    console.log(CHECK_HELP_TEXT);
+    return 0;
+  }
+
   const showProgress = !parsedArgs.noProgress && parsedArgs.format !== "json";
 
   // Track completed steps to avoid duplicates
