@@ -9,7 +9,7 @@ export { VERSION } from "./version";
 // Init command exports
 export { runInit, detectProjectTools } from "./init";
 export type {
-  ChaperoneConfig,
+  ChaperoneConfig as InitChaperoneConfig,
   DetectionResult,
   InitOptions,
   TypeScriptDetection,
@@ -18,34 +18,37 @@ export type {
   PackageManagerDetection,
 } from "./init";
 
-export interface CheckResult {
-  file: string;
-  rule: string;
-  message: string;
-  line?: number;
-  column?: number;
-  severity: "error" | "warning";
-}
+// Check command exports
+export {
+  check,
+  checkAndFormat,
+  createCheckOptions,
+  loadConfig,
+  getEffectivePatterns,
+  runAllTools,
+  runAllRules,
+  format,
+  formatText,
+  formatJson,
+  formatAI,
+} from "./check";
 
-export interface CheckOptions {
-  cwd?: string;
-  config?: string;
-}
+export type {
+  CheckResult,
+  CheckSummary,
+  CheckOptions,
+  ChaperoneConfig,
+  CustomRule,
+  FileNamingRule,
+  RegexRule,
+  AIInstructionsRule,
+  AIInstructionFile,
+  ToolConfig,
+  RulesConfig,
+} from "./check";
 
-export interface CheckReport {
-  files: number;
-  violations: CheckResult[];
-  passed: boolean;
-}
-
-/**
- * Run code convention checks
- */
-export async function check(_options: CheckOptions = {}): Promise<CheckReport> {
-  // Placeholder implementation
-  return {
-    files: 0,
-    violations: [],
-    passed: true,
-  };
-}
+// Utils exports
+export { execCommand, findNpmBinary, commandExists } from "./utils/process";
+export { globSync, matchGlob, getAllFiles } from "./utils/glob";
+export { fileExists, readJsonFile, readTextFile, findFirstExisting, joinPath } from "./utils/fs";
+export { copyToClipboard } from "./utils/clipboard";
