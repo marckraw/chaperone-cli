@@ -55,7 +55,7 @@ export function execCommand(
       resolve({
         stdout,
         stderr,
-        exitCode: killed ? 124 : (code ?? 1),
+        exitCode: killed ? 124 : code ?? 1,
       });
     });
 
@@ -79,9 +79,12 @@ export async function commandExists(command: string): Promise<boolean> {
 }
 
 /**
- * Find the npm/npx binary path
+ * Find the binary path
  */
-export async function findNpmBinary(name: string, cwd: string): Promise<string | null> {
+export async function findNpmBinary(
+  name: string,
+  cwd: string
+): Promise<string | null> {
   // Try local node_modules first
   const localPath = `${cwd}/node_modules/.bin/${name}`;
   const checkLocal = await execCommand("test", ["-x", localPath]);

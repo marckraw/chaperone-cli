@@ -9,8 +9,7 @@
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun run build.ts",
-    "build:all": "bun run build.ts --all",
-    "dupsko": "npm install"
+    "build:all": "bun run build.ts --all"
   },
   "keywords": [
     "cli",

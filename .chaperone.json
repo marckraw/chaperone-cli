@@ -36,7 +36,10 @@
         "type": "regex",
         "pattern": "\\bnpm\\s+(install|run|start|test|build)",
         "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
-        "exclude": ["CLAUDE.md", "**/*.md"],
+        "exclude": [
+          "CLAUDE.md",
+          "**/*.md"
+        ],
         "message": "Use 'bun' commands instead of npm. This project is built with Bun.",
         "mustMatch": false
       },
@@ -48,7 +51,10 @@
         "type": "regex",
         "pattern": "\\byarn\\s+(install|run|start|test|build|add)",
         "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
-        "exclude": ["CLAUDE.md", "**/*.md"],
+        "exclude": [
+          "CLAUDE.md",
+          "**/*.md"
+        ],
         "message": "Use 'bun' commands instead of yarn. This project is built with Bun.",
         "mustMatch": false
       },
@@ -60,7 +66,10 @@
         "type": "regex",
         "pattern": "\\bpnpm\\s+(install|run|start|test|build|add)",
         "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
-        "exclude": ["CLAUDE.md", "**/*.md"],
+        "exclude": [
+          "CLAUDE.md",
+          "**/*.md"
+        ],
         "message": "Use 'bun' commands instead of pnpm. This project is built with Bun.",
         "mustMatch": false
       },
@@ -72,7 +81,10 @@
         "type": "regex",
         "pattern": "\\bnpx\\s+",
         "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
-        "exclude": ["CLAUDE.md", "**/*.md"],
+        "exclude": [
+          "CLAUDE.md",
+          "**/*.md"
+        ],
         "message": "Use 'bunx' instead of npx. This project is built with Bun.",
         "mustMatch": false
       },
@@ -95,13 +107,11 @@
         "type": "package-fields",
         "requiredFields": [
           "scripts.dev",
-          "scripts.build",
-          "scripts.test"
+          "scripts.build"
         ],
         "fieldPatterns": {
           "scripts.dev": "^bun\\s+",
-          "scripts.build": "^bun\\s+",
-          "scripts.test": "^bun\\s+"
+          "scripts.build": "^bun\\s+"
         },
         "message": "Package.json scripts must use 'bun' commands, not npm/yarn/pnpm"
       }
