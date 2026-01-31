@@ -1,5 +1,134 @@
 {
   "version": "1.0.0",
+  "rules": {
+    "typescript": {
+      "enabled": true
+    },
+    "eslint": {
+      "enabled": true,
+      "extensions": [
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx"
+      ]
+    },
+    "prettier": {
+      "enabled": true
+    },
+    "custom": [
+      {
+        "id": "require-package-metadata",
+        "severity": "warning",
+        "type": "package-fields",
+        "requiredFields": [
+          "name",
+          "version",
+          "description"
+        ],
+        "message": "Package.json should have name, version, and description fields"
+      },
+      {
+        "id": "no-npm-commands",
+        "severity": "error",
+        "source": "CLAUDE.md",
+        "originalText": "Do NOT use npm, yarn, or pnpm",
+        "type": "regex",
+        "pattern": "\\bnpm\\s+(install|run|start|test|build)",
+        "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
+        "exclude": ["CLAUDE.md", "**/*.md"],
+        "message": "Use 'bun' commands instead of npm. This project is built with Bun.",
+        "mustMatch": false
+      },
+      {
+        "id": "no-yarn-commands",
+        "severity": "error",
+        "source": "CLAUDE.md",
+        "originalText": "Do NOT use npm, yarn, or pnpm",
+        "type": "regex",
+        "pattern": "\\byarn\\s+(install|run|start|test|build|add)",
+        "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
+        "exclude": ["CLAUDE.md", "**/*.md"],
+        "message": "Use 'bun' commands instead of yarn. This project is built with Bun.",
+        "mustMatch": false
+      },
+      {
+        "id": "no-pnpm-commands",
+        "severity": "error",
+        "source": "CLAUDE.md",
+        "originalText": "Do NOT use npm, yarn, or pnpm",
+        "type": "regex",
+        "pattern": "\\bpnpm\\s+(install|run|start|test|build|add)",
+        "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
+        "exclude": ["CLAUDE.md", "**/*.md"],
+        "message": "Use 'bun' commands instead of pnpm. This project is built with Bun.",
+        "mustMatch": false
+      },
+      {
+        "id": "no-npx-usage",
+        "severity": "error",
+        "source": "CLAUDE.md",
+        "originalText": "❌ `npx` → ✅ `bunx`",
+        "type": "regex",
+        "pattern": "\\bnpx\\s+",
+        "files": "**/*.{md,json,js,ts,sh,yml,yaml}",
+        "exclude": ["CLAUDE.md", "**/*.md"],
+        "message": "Use 'bunx' instead of npx. This project is built with Bun.",
+        "mustMatch": false
+      },
+      {
+        "id": "no-tsx-extension",
+        "severity": "error",
+        "source": "CLAUDE.md",
+        "originalText": "Use `.ts` extension for all TypeScript files (no `.tsx` needed - this is a CLI tool)",
+        "type": "regex",
+        "pattern": "\\.tsx$",
+        "files": "src/**/*",
+        "message": "Use .ts extension for all TypeScript files. No .tsx needed - this is a CLI tool.",
+        "mustMatch": false
+      },
+      {
+        "id": "require-bun-runtime",
+        "severity": "error",
+        "source": "CLAUDE.md",
+        "originalText": "ALWAYS use Bun",
+        "type": "package-fields",
+        "requiredFields": [
+          "scripts.dev",
+          "scripts.build",
+          "scripts.test"
+        ],
+        "fieldPatterns": {
+          "scripts.dev": "^bun\\s+",
+          "scripts.build": "^bun\\s+",
+          "scripts.test": "^bun\\s+"
+        },
+        "message": "Package.json scripts must use 'bun' commands, not npm/yarn/pnpm"
+      }
+    ]
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build"
+  ],
+  "aiInstructions": {
+    "autoDetect": true,
+    "files": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "GEMINI.md",
+      "CODEX.md",
+      ".cursorrules",
+      ".cursor/rules/*.mdc",
+      ".github/copilot-instructions.md",
+      ".instructions.md"
+    ],
+    "extractRules": true
+  },
   "project": {
     "typescript": {
       "detected": true,
@@ -20,15 +149,6 @@
       "lockfile": "bun.lockb"
     }
   },
-  "rules": {},
-  "include": [
-    "src/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "build"
-  ],
   "integrations": {
     "respectEslintIgnore": false,
     "respectPrettierIgnore": false,

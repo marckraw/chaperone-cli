@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { globSync } from "../../utils/glob";
-import type { AIInstructionFile, AIInstructionsConfig, AIInstructionsRule, CheckResult } from "../types";
-import type { RuleResult, RuleRunnerOptions } from "./types";
+import type { AIInstructionFile, AIInstructionsConfig, RegexRule } from "../types";
 
 /**
  * AI instruction file metadata
@@ -100,8 +99,8 @@ function extractRules(
   file: AIInstructionFile,
   lineContent: string,
   lineNumber: number
-): AIInstructionsRule[] {
-  const rules: AIInstructionsRule[] = [];
+): RegexRule[] {
+  const rules: RegexRule[] = [];
 
   for (const { pattern, extract } of EXTRACTION_PATTERNS) {
     pattern.lastIndex = 0;
@@ -116,7 +115,7 @@ function extractRules(
 
         if (regexInfo) {
           rules.push({
-            type: "ai-instructions",
+            type: "regex",
             id: `ai-${file.name}-${lineNumber}-forbid-${subject.replace(/\s+/g, "-")}`,
             source: file.path,
             pattern: regexInfo.pattern,
@@ -133,7 +132,7 @@ function extractRules(
 
         if (regexInfo) {
           rules.push({
-            type: "ai-instructions",
+            type: "regex",
             id: `ai-${file.name}-${lineNumber}-prefer-${forbidden.replace(/\s+/g, "-")}`,
             source: file.path,
             pattern: regexInfo.pattern,
@@ -198,10 +197,13 @@ export function detectAIInstructionFiles(
 }
 
 /**
- * Parse AI instruction files and extract enforceable rules
+ * Parse AI instruction files and extract enforceable rules (legacy auto-extraction)
+ *
+ * Note: For better rule extraction, use the `chaperone analyze` command which
+ * uses Claude to intelligently extract rules from AI instruction files.
  */
-export function parseAIInstructions(files: AIInstructionFile[]): AIInstructionsRule[] {
-  const rules: AIInstructionsRule[] = [];
+export function parseAIInstructions(files: AIInstructionFile[]): RegexRule[] {
+  const rules: RegexRule[] = [];
 
   for (const file of files) {
     const lines = file.content.split("\n");
@@ -209,7 +211,7 @@ export function parseAIInstructions(files: AIInstructionFile[]): AIInstructionsR
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       // Skip empty lines and headers
-      if (!line.trim() || line.startsWith("#")) {
+      if (!line || !line.trim() || line.startsWith("#")) {
         continue;
       }
 
@@ -231,94 +233,12 @@ export function parseAIInstructions(files: AIInstructionFile[]): AIInstructionsR
 }
 
 /**
- * Run AI instruction rules
+ * Check if a rule was AI-generated (has source metadata)
  */
-export async function runAIInstructionRules(
-  rules: AIInstructionsRule[],
-  options: RuleRunnerOptions
-): Promise<RuleResult[]> {
-  const { cwd, exclude } = options;
-  const results: RuleResult[] = [];
-
-  for (const rule of rules) {
-    const ruleResults: CheckResult[] = [];
-
-    // Find files matching the glob pattern
-    const files = globSync(rule.files, {
-      cwd,
-      ignore: exclude,
-    });
-
-    // Compile the regex
-    let regex: RegExp;
-    try {
-      regex = new RegExp(rule.pattern, "g");
-    } catch {
-      continue;
-    }
-
-    for (const file of files) {
-      const fullPath = join(cwd, file);
-
-      let content: string;
-      try {
-        content = readFileSync(fullPath, "utf-8");
-      } catch {
-        continue;
-      }
-
-      if (rule.mustMatch) {
-        // Pattern MUST be present
-        const hasMatch = regex.test(content);
-        if (!hasMatch) {
-          ruleResults.push({
-            file,
-            rule: `ai-instructions/${rule.id}`,
-            message: rule.message,
-            severity: rule.severity,
-            source: "ai-instructions",
-          });
-        }
-      } else {
-        // Pattern must NOT be present
-        regex.lastIndex = 0;
-
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(content)) !== null) {
-          const beforeMatch = content.substring(0, match.index);
-          const lineNumber = beforeMatch.split("\n").length;
-          const lastNewline = beforeMatch.lastIndexOf("\n");
-          const column = match.index - lastNewline;
-
-          ruleResults.push({
-            file,
-            line: lineNumber,
-            column,
-            rule: `ai-instructions/${rule.id}`,
-            message: rule.message,
-            severity: rule.severity,
-            source: "ai-instructions",
-          });
-        }
-      }
-    }
-
-    results.push({
-      ruleId: rule.id,
-      results: ruleResults,
-    });
-  }
-
-  return results;
-}
-
-/**
- * Check if a rule is an AIInstructionsRule
- */
-export function isAIInstructionsRule(rule: unknown): rule is AIInstructionsRule {
+export function isAIGeneratedRule(rule: unknown): boolean {
   return (
     typeof rule === "object" &&
     rule !== null &&
-    (rule as AIInstructionsRule).type === "ai-instructions"
+    typeof (rule as RegexRule).source === "string"
   );
 }

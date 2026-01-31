@@ -2,22 +2,15 @@ import type { ChaperoneConfig, CheckResult, CustomRule } from "../types";
 import type { RuleRunnerOptions, RuleResult } from "./types";
 import { runFileNamingRule, isFileNamingRule } from "./file-naming";
 import { runRegexRule, isRegexRule } from "./regex";
-import {
-  detectAIInstructionFiles,
-  parseAIInstructions,
-  runAIInstructionRules,
-  isAIInstructionsRule,
-} from "./ai-instructions";
+import { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
+import { runComponentLocationRule, isComponentLocationRule } from "./component-location";
 
 export * from "./types";
 export { runFileNamingRule, isFileNamingRule } from "./file-naming";
 export { runRegexRule, isRegexRule } from "./regex";
-export {
-  detectAIInstructionFiles,
-  parseAIInstructions,
-  runAIInstructionRules,
-  isAIInstructionsRule,
-} from "./ai-instructions";
+export { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
+export { runComponentLocationRule, isComponentLocationRule } from "./component-location";
+export { detectAIInstructionFiles } from "./ai-instructions";
 
 /**
  * Result from running all custom rules
@@ -25,7 +18,6 @@ export {
 export interface AllRulesResult {
   results: CheckResult[];
   byRule: Record<string, RuleResult>;
-  aiFilesDetected: string[];
 }
 
 /**
@@ -35,45 +27,45 @@ export async function runAllRules(
   config: ChaperoneConfig,
   options: RuleRunnerOptions
 ): Promise<AllRulesResult> {
-  const { cwd } = options;
+  const { onDebug } = options;
   const allResults: CheckResult[] = [];
   const byRule: Record<string, RuleResult> = {};
-  const aiFilesDetected: string[] = [];
 
   // Run custom rules from config
   const customRules = config.rules?.custom ?? [];
 
+  onDebug?.(`Found ${customRules.length} custom rule(s) in config`);
+
   for (const rule of customRules) {
     let result: RuleResult | null = null;
+    const isAIGenerated = !!rule.source;
+    const typeLabel = isAIGenerated ? `${rule.type}*` : rule.type;
+    const excludeInfo = rule.exclude?.length ? ` (excluding: ${rule.exclude.join(", ")})` : "";
 
     if (isFileNamingRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: checking pattern "${rule.pattern}"${excludeInfo}`);
       result = await runFileNamingRule(rule, options);
     } else if (isRegexRule(rule)) {
+      const mode = rule.mustMatch ? "must match" : "must NOT match";
+      onDebug?.(`  [${typeLabel}] ${rule.id}: ${mode} /${rule.pattern}/ in "${rule.files}"${excludeInfo}`);
       result = await runRegexRule(rule, options);
-    } else if (isAIInstructionsRule(rule)) {
-      const results = await runAIInstructionRules([rule], options);
-      result = results[0] ?? null;
+    } else if (isPackageFieldsRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: checking package.json fields [${rule.requiredFields.join(", ")}]`);
+      result = await runPackageFieldsRule(rule, options);
+    } else if (isComponentLocationRule(rule)) {
+      const mode = rule.mustBeIn ? "must be in" : "must NOT be in";
+      onDebug?.(`  [${typeLabel}] ${rule.id}: ${rule.componentType} components ${mode} "${rule.requiredLocation}"${excludeInfo}`);
+      result = await runComponentLocationRule(rule, options);
     }
 
     if (result) {
       byRule[rule.id] = result;
       allResults.push(...result.results);
-    }
-  }
-
-  // Detect and run AI instruction rules
-  const aiConfig = config.aiInstructions;
-  if (aiConfig?.autoDetect !== false) {
-    const aiFiles = detectAIInstructionFiles(cwd, aiConfig);
-    aiFilesDetected.push(...aiFiles.map((f) => f.path));
-
-    if (aiConfig?.extractRules !== false && aiFiles.length > 0) {
-      const aiRules = parseAIInstructions(aiFiles);
-      const aiResults = await runAIInstructionRules(aiRules, options);
-
-      for (const result of aiResults) {
-        byRule[result.ruleId] = result;
-        allResults.push(...result.results);
+      const issues = result.results.length;
+      if (issues > 0) {
+        onDebug?.(`    → ${issues} issue(s) found`);
+      } else {
+        onDebug?.(`    → passed`);
       }
     }
   }
@@ -81,7 +73,6 @@ export async function runAllRules(
   return {
     results: allResults,
     byRule,
-    aiFilesDetected,
   };
 }
 
@@ -127,8 +118,20 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
           errors.push(`Regex rule '${ruleId}' has invalid pattern: ${rule.pattern}`);
         }
       }
-    } else if (isAIInstructionsRule(rule)) {
-      // AI rules are auto-generated, minimal validation
+    } else if (isPackageFieldsRule(rule)) {
+      if (!rule.requiredFields || rule.requiredFields.length === 0) {
+        errors.push(`Package fields rule '${ruleId}' is missing 'requiredFields'`);
+      }
+    } else if (isComponentLocationRule(rule)) {
+      if (!rule.files) {
+        errors.push(`Component location rule '${ruleId}' is missing 'files'`);
+      }
+      if (!rule.componentType) {
+        errors.push(`Component location rule '${ruleId}' is missing 'componentType'`);
+      }
+      if (!rule.requiredLocation) {
+        errors.push(`Component location rule '${ruleId}' is missing 'requiredLocation'`);
+      }
     } else {
       errors.push(`Rule '${ruleId}' has unknown type: ${ruleType}`);
     }

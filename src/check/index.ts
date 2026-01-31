@@ -17,10 +17,16 @@ export { format, formatText, formatJson, formatAI } from "./formatters";
 export type ProgressCallback = (step: string, status: "start" | "done" | "skipped") => void;
 
 /**
+ * Debug callback for detailed output
+ */
+export type DebugCallback = (message: string) => void;
+
+/**
  * Extended check options with progress callback
  */
 export interface CheckOptionsWithProgress extends CheckOptions {
   onProgress?: ProgressCallback;
+  onDebug?: DebugCallback;
 }
 
 /**
@@ -28,7 +34,7 @@ export interface CheckOptionsWithProgress extends CheckOptions {
  */
 export async function check(options: CheckOptionsWithProgress): Promise<CheckSummary> {
   const startTime = Date.now();
-  const { cwd, configPath, fix, include, exclude, onProgress } = options;
+  const { cwd, configPath, fix, include, exclude, onProgress, onDebug } = options;
 
   // Load configuration
   onProgress?.("Loading configuration", "start");
@@ -77,9 +83,11 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     cwd,
     include: patterns.include,
     exclude: patterns.exclude,
+    onDebug,
   });
 
-  if (ruleResults.results.length === 0 && ruleResults.aiFilesDetected.length === 0) {
+  const customRulesCount = config.rules?.custom?.length ?? 0;
+  if (customRulesCount === 0) {
     onProgress?.("Checking custom rules", "skipped");
   } else {
     onProgress?.("Checking custom rules", "done");

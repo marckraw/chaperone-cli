@@ -41,11 +41,15 @@ export type {
   CustomRule,
   FileNamingRule,
   RegexRule,
-  AIInstructionsRule,
+  AIGeneratedMetadata,
   AIInstructionFile,
   ToolConfig,
   RulesConfig,
 } from "./check";
+
+// Analyze command exports
+export { analyze, runAnalyze, formatAnalyzeResult } from "./analyze";
+export type { AnalyzeOptions, AnalyzeResult, SkippedInstruction } from "./analyze";
 
 // Utils exports
 export { execCommand, findNpmBinary, commandExists } from "./utils/process";

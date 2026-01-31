@@ -11,6 +11,16 @@ export interface CheckResult {
   source?: string; // The source of the rule (typescript, eslint, custom, ai-instructions)
   fixable?: boolean;
   suggestion?: string;
+  // Additional context for debugging/fixing
+  context?: {
+    matchedText?: string; // For regex: the text that matched
+    surroundingLines?: string[]; // Lines around the error for context
+    field?: string; // For package-fields: which field
+    expectedValue?: string; // What was expected
+    actualValue?: string; // What was found
+    componentType?: string; // For component-location: presentational/stateful
+    detectedPatterns?: string[]; // What patterns were detected (e.g., hooks found)
+  };
 }
 
 /**
@@ -38,6 +48,7 @@ export interface CheckOptions {
   noWarnings?: boolean;
   include?: string[];
   exclude?: string[];
+  debug?: boolean;
 }
 
 /**
@@ -47,12 +58,21 @@ export interface BaseRule {
   type: string;
   id: string;
   severity: "error" | "warning";
+  exclude?: string[]; // Glob patterns to exclude from this rule (e.g., ["**/*.test.ts", "src/generated/**"])
+}
+
+/**
+ * Optional metadata for AI-generated rules
+ */
+export interface AIGeneratedMetadata {
+  source?: string; // File it was extracted from (e.g., "CLAUDE.md")
+  originalText?: string; // The original instruction text
 }
 
 /**
  * File naming rule - check for companion files
  */
-export interface FileNamingRule extends BaseRule {
+export interface FileNamingRule extends BaseRule, AIGeneratedMetadata {
   type: "file-naming";
   pattern: string; // Glob for files to check
   requireCompanion?: {
@@ -64,7 +84,7 @@ export interface FileNamingRule extends BaseRule {
 /**
  * Regex rule - search for forbidden/required patterns
  */
-export interface RegexRule extends BaseRule {
+export interface RegexRule extends BaseRule, AIGeneratedMetadata {
   type: "regex";
   pattern: string; // Regex to find
   files: string; // Glob for files
@@ -73,22 +93,37 @@ export interface RegexRule extends BaseRule {
 }
 
 /**
- * AI instructions rule - extracted from CLAUDE.md, AGENTS.md, etc.
+ * Package fields rule - validate package.json has required fields
  */
-export interface AIInstructionsRule extends BaseRule {
-  type: "ai-instructions";
-  source: string; // File it was extracted from
-  pattern: string; // Regex pattern
-  files: string; // Glob for files
-  message: string;
-  mustMatch?: boolean;
-  originalText: string; // The original instruction text
+export interface PackageFieldsRule extends BaseRule, AIGeneratedMetadata {
+  type: "package-fields";
+  requiredFields: string[]; // Fields that must exist (supports dot notation: "scripts.build")
+  forbiddenFields?: string[]; // Fields that must NOT exist
+  fieldPatterns?: Record<string, string>; // Field value must match regex pattern
+  message?: string;
+}
+
+/**
+ * Component location rule - ensure component types are in correct folders
+ */
+export interface ComponentLocationRule extends BaseRule, AIGeneratedMetadata {
+  type: "component-location";
+  files: string; // Glob for component files to check
+  componentType: "presentational" | "stateful"; // Type of component to check
+  requiredLocation: string; // Folder/pattern where these components should be
+  mustBeIn: boolean; // true = must be in location, false = must NOT be in location
+  message?: string;
 }
 
 /**
  * Union of all custom rule types
  */
-export type CustomRule = FileNamingRule | RegexRule | AIInstructionsRule;
+export type CustomRule = FileNamingRule | RegexRule | PackageFieldsRule | ComponentLocationRule;
+
+/**
+ * @deprecated Use RegexRule with source metadata instead
+ */
+export type AIInstructionsRule = RegexRule;
 
 /**
  * Tool runner configuration

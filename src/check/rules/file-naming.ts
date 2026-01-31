@@ -29,10 +29,13 @@ export async function runFileNamingRule(
   const { cwd, exclude } = options;
   const results: CheckResult[] = [];
 
+  // Merge global excludes with rule-specific excludes
+  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
+
   // Find files matching the pattern
   const files = globSync(rule.pattern, {
     cwd,
-    ignore: exclude,
+    ignore: allExcludes,
   });
 
   for (const file of files) {

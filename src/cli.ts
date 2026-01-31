@@ -7,6 +7,7 @@ import { formatAI } from "./check/formatters";
 import type { OutputFormat } from "./check/formatters";
 import { copyToClipboard } from "./utils/clipboard";
 import { createSpinner } from "./utils/spinner";
+import { runAnalyze } from "./analyze";
 
 const HELP_TEXT = `
 chaperone v${VERSION} - Code enforcer CLI
@@ -17,6 +18,7 @@ USAGE:
 COMMANDS:
   init        Initialize Chaperone configuration
   check       Check codebase for convention violations
+  analyze     Extract rules from AI instruction files (CLAUDE.md, etc.)
   version     Show version information
   help        Show this help message
 
@@ -29,10 +31,16 @@ CHECK OPTIONS:
   --no-warnings         Hide warnings, show only errors
   --copy                Copy remaining errors to clipboard (AI format)
   --no-progress         Disable progress spinner
+  --debug               Show detailed rule execution info
 
 GENERAL OPTIONS:
   --help, -h            Show help
   --version, -v         Show version
+
+ANALYZE OPTIONS:
+  --dry-run             Preview extracted rules without saving
+  --force               Replace existing AI-extracted rules
+  --verbose, -v         Show detailed output
 
 EXAMPLES:
   chaperone init
@@ -41,6 +49,8 @@ EXAMPLES:
   chaperone check --fix --copy           Fix and copy remaining to clipboard
   chaperone check --format ai            AI-friendly output
   chaperone check --format json          JSON output for CI/CD
+  chaperone analyze                      Extract rules from AI files
+  chaperone analyze --dry-run            Preview without saving
   chaperone version
 `;
 
@@ -61,6 +71,7 @@ interface CheckArgs {
   copy?: boolean;
   noProgress?: boolean;
   noWarnings?: boolean;
+  debug?: boolean;
   help?: boolean;
 }
 
@@ -110,6 +121,10 @@ function parseCheckArgs(args: string[]): CheckArgs {
       case "--no-warnings":
         result.noWarnings = true;
         break;
+
+      case "--debug":
+        result.debug = true;
+        break;
     }
   }
 
@@ -131,6 +146,7 @@ OPTIONS:
   --no-warnings         Hide warnings, show only errors
   --copy                Copy remaining errors to clipboard (AI format)
   --no-progress         Disable progress spinner
+  --debug               Show detailed rule execution info
   --help, -h            Show this help message
 
 EXAMPLES:
@@ -138,6 +154,7 @@ EXAMPLES:
   chaperone check --fix
   chaperone check --format json
   chaperone check --fix --copy
+  chaperone check --debug
 `;
 
 async function runCheck(args: string[]): Promise<number> {
@@ -161,6 +178,7 @@ async function runCheck(args: string[]): Promise<number> {
     format: parsedArgs.format ?? "text",
     quiet: parsedArgs.quiet ?? false,
     noWarnings: parsedArgs.noWarnings ?? false,
+    debug: parsedArgs.debug ?? false,
     onProgress: showProgress
       ? (step, status) => {
           if (status === "start") {
@@ -177,6 +195,12 @@ async function runCheck(args: string[]): Promise<number> {
               console.log(`\x1b[33m○\x1b[0m ${step} \x1b[2m(skipped)\x1b[0m`);
             }
           }
+        }
+      : undefined,
+    onDebug: parsedArgs.debug
+      ? (message) => {
+          spinner.stop();
+          console.log(`\x1b[2m${message}\x1b[0m`);
         }
       : undefined,
   });
@@ -239,6 +263,11 @@ async function main(): Promise<void> {
     const initArgs = args.slice(1);
     await runInit(initArgs);
     process.exit(0);
+  }
+
+  if (command === "analyze") {
+    const exitCode = await runAnalyze(args.slice(1));
+    process.exit(exitCode);
   }
 
   console.error(`Unknown command: ${command}`);

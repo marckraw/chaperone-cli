@@ -1,12 +1,18 @@
 import type { CheckResult, CustomRule } from "../types";
 
 /**
+ * Debug callback for reporting rule execution
+ */
+export type DebugCallback = (message: string) => void;
+
+/**
  * Options for running custom rules
  */
 export interface RuleRunnerOptions {
   cwd: string;
   include: string[];
   exclude: string[];
+  onDebug?: DebugCallback;
 }
 
 /**

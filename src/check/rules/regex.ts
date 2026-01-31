@@ -14,10 +14,13 @@ export async function runRegexRule(
   const { cwd, exclude } = options;
   const results: CheckResult[] = [];
 
+  // Merge global excludes with rule-specific excludes
+  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
+
   // Find files matching the glob pattern
   const files = globSync(rule.files, {
     cwd,
-    ignore: exclude,
+    ignore: allExcludes,
   });
 
   // Compile the regex
@@ -68,6 +71,8 @@ export async function runRegexRule(
 
       // Find all matches with line numbers
       let match: RegExpExecArray | null;
+      const lines = content.split("\n");
+
       while ((match = regex.exec(content)) !== null) {
         // Find line number
         const beforeMatch = content.substring(0, match.index);
@@ -77,6 +82,15 @@ export async function runRegexRule(
         const lastNewline = beforeMatch.lastIndexOf("\n");
         const column = match.index - lastNewline;
 
+        // Get surrounding lines for context
+        const surroundingLines: string[] = [];
+        const startLine = Math.max(0, lineNumber - 2);
+        const endLine = Math.min(lines.length, lineNumber + 1);
+        for (let i = startLine; i < endLine; i++) {
+          const prefix = i === lineNumber - 1 ? ">" : " ";
+          surroundingLines.push(`${prefix} ${i + 1} | ${lines[i]}`);
+        }
+
         results.push({
           file,
           line: lineNumber,
@@ -85,6 +99,10 @@ export async function runRegexRule(
           message: rule.message,
           severity: rule.severity,
           source: "custom",
+          context: {
+            matchedText: match[0],
+            surroundingLines,
+          },
         });
       }
     }

@@ -34,6 +34,45 @@ function formatResult(result: CheckResult): string {
     `    ${colors.dim}Rule: ${result.rule}${colors.reset}`,
   ];
 
+  // Add context information if available
+  if (result.context) {
+    const ctx = result.context;
+
+    // Show matched text for regex rules
+    if (ctx.matchedText) {
+      lines.push(`    ${colors.dim}Matched: ${colors.reset}${colors.red}"${ctx.matchedText}"${colors.reset}`);
+    }
+
+    // Show field info for package-fields rules
+    if (ctx.field) {
+      lines.push(`    ${colors.dim}Field: ${colors.reset}${ctx.field}`);
+    }
+
+    // Show expected vs actual
+    if (ctx.expectedValue) {
+      lines.push(`    ${colors.dim}Expected: ${colors.reset}${ctx.expectedValue}`);
+    }
+    if (ctx.actualValue) {
+      lines.push(`    ${colors.dim}Actual: ${colors.reset}${ctx.actualValue}`);
+    }
+
+    // Show component type and detected patterns
+    if (ctx.componentType) {
+      lines.push(`    ${colors.dim}Component type: ${colors.reset}${ctx.componentType}`);
+    }
+    if (ctx.detectedPatterns && ctx.detectedPatterns.length > 0) {
+      lines.push(`    ${colors.dim}Detected: ${colors.reset}${ctx.detectedPatterns.join(", ")}`);
+    }
+
+    // Show surrounding code lines
+    if (ctx.surroundingLines && ctx.surroundingLines.length > 0) {
+      lines.push(`    ${colors.dim}Code:${colors.reset}`);
+      for (const line of ctx.surroundingLines) {
+        lines.push(`      ${colors.dim}${line}${colors.reset}`);
+      }
+    }
+  }
+
   if (result.suggestion) {
     lines.push(`    ${colors.cyan}Suggestion: ${result.suggestion}${colors.reset}`);
   }

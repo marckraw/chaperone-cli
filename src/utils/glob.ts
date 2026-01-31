@@ -12,10 +12,44 @@ export interface GlobOptions {
 }
 
 /**
+ * Expand brace patterns like {a,b,c} into multiple patterns
+ */
+function expandBraces(pattern: string): string[] {
+  const braceMatch = pattern.match(/\{([^}]+)\}/);
+  if (!braceMatch) {
+    return [pattern];
+  }
+
+  const before = pattern.slice(0, braceMatch.index);
+  const after = pattern.slice(braceMatch.index! + braceMatch[0].length);
+  const options = braceMatch[1].split(",");
+
+  const expanded: string[] = [];
+  for (const opt of options) {
+    // Recursively expand in case there are multiple brace groups
+    expanded.push(...expandBraces(before + opt + after));
+  }
+
+  return expanded;
+}
+
+/**
  * Simple synchronous glob implementation
  * Supports patterns like: *.ts, **\/*.tsx, src/**\/*
+ * Also supports brace expansion: *.{ts,tsx}
  */
 export function globSync(pattern: string, options: GlobOptions = {}): string[] {
+  // Handle brace expansion
+  const patterns = expandBraces(pattern);
+  if (patterns.length > 1) {
+    const allResults = new Set<string>();
+    for (const p of patterns) {
+      for (const result of globSync(p, options)) {
+        allResults.add(result);
+      }
+    }
+    return Array.from(allResults).sort();
+  }
   const { cwd = process.cwd(), ignore = [], absolute = false } = options;
 
   const results: string[] = [];
