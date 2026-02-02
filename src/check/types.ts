@@ -90,6 +90,7 @@ export interface RegexRule extends BaseRule, AIGeneratedMetadata {
   files: string; // Glob for files
   message: string;
   mustMatch?: boolean; // true = must exist, false = must NOT exist (default)
+  reportOnce?: boolean; // true = report only first match per file (useful for file-level rules like "must use .tsx")
 }
 
 /**

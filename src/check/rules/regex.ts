@@ -104,6 +104,11 @@ export async function runRegexRule(
             surroundingLines,
           },
         });
+
+        // If reportOnce is enabled, only report the first match per file
+        if (rule.reportOnce) {
+          break;
+        }
       }
     }
   }

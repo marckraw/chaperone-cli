@@ -28,6 +28,9 @@ Use for patterns that should or should not appear in code.
 - source: filename this was extracted from
 - originalText: the verbatim instruction
 
+**Optional fields:**
+- reportOnce: true to only report first match per file (useful for file-level rules)
+
 **Forbidden patterns (mustMatch: false):**
 - "Don't use console.log" → pattern: "console\\.log\\("
 - "No any types" → pattern: ":\\s*any\\b"
@@ -36,6 +39,10 @@ Use for patterns that should or should not appear in code.
 **Required patterns (mustMatch: true):**
 - "Always use 'use strict'" → pattern: "'use strict'", mustMatch: true
 - "Must have copyright header" → pattern: "^/\\*\\*.*Copyright", mustMatch: true
+
+**File-level rules (reportOnce: true):**
+Use reportOnce when you care about whether a file matches, not how many times:
+- "Files with JSX should use .tsx extension" → pattern: "(<[A-Z]|<[a-z])", files: "**/*.ts", reportOnce: true
 
 ### 2. "file-naming" - File Convention Rules
 
