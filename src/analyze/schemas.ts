@@ -49,6 +49,10 @@ export const regexRuleSchema = baseRuleSchema.extend({
     .boolean()
     .default(false)
     .describe("If true, pattern must exist; if false, pattern must NOT exist"),
+  reportOnce: z
+    .boolean()
+    .optional()
+    .describe("If true, only report the first match per file (useful for file-level rules like 'must use .tsx extension')"),
 });
 
 /**
