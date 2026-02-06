@@ -1,0 +1,37 @@
+name: Changeset Check
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  changeset-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure PR includes a changeset for product changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CHANGED_FILES="$(git diff --name-only origin/master...HEAD)"
+          echo "Changed files:"
+          echo "${CHANGED_FILES}"
+
+          if echo "${CHANGED_FILES}" | grep -Eq '^(src/|build\.ts$|package\.json$)'; then
+            if ! echo "${CHANGED_FILES}" | grep -Eq '^\.changeset/.+\.md$'; then
+              echo "Missing .changeset/*.md file for code/package changes."
+              echo "Run 'bun run changeset' and commit the generated file."
+              exit 1
+            fi
+          fi
+
+          echo "Changeset check passed."

@@ -197,6 +197,42 @@ Add Chaperone to your CI pipeline to catch convention violations before merge:
   run: chaperone check
 ```
 
+## Release Process
+
+This repository uses **Changesets** for version control and **GitHub Actions** for binary releases.
+
+Target branch: `master`
+
+### 1) Feature PRs
+
+For user-facing/code changes, include a changeset:
+
+```bash
+bun run changeset
+```
+
+The PR check (`Changeset Check`) enforces this for changes under `src/`, `build.ts`, or `package.json`.
+
+### 2) Version PRs
+
+On pushes to `master`, `Changeset Version PR` runs and opens/updates a version PR using `changesets/action`.
+
+### 3) Binary Releases
+
+After version bumps land on `master`, `Release Binaries`:
+- reads `package.json` version,
+- creates `v<version>` tag if missing,
+- builds Bun executables for all targets,
+- generates `SHA256SUMS.txt`,
+- publishes assets to GitHub Releases.
+
+Release assets include:
+- `chaperone-darwin-arm64`
+- `chaperone-darwin-x64`
+- `chaperone-linux-x64`
+- `chaperone-linux-arm64`
+- `chaperone-windows-x64.exe`
+
 ## Development
 
 ```bash
