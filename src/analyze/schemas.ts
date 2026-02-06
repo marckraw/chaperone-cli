@@ -93,6 +93,40 @@ export const componentLocationRuleSchema = baseRuleSchema.extend({
 });
 
 /**
+ * Command rule - run command-based invariant checks
+ */
+export const commandRuleSchema = baseRuleSchema.extend({
+  type: z.literal("command"),
+  command: z.string().describe("Executable to run, e.g., 'npm' or 'node'"),
+  args: z.array(z.string()).optional().describe("Command arguments"),
+  cwd: z.string().optional().describe("Optional working directory relative to project root"),
+  timeoutMs: z.number().int().positive().optional().describe("Optional command timeout in milliseconds"),
+  expectedExitCode: z.number().int().optional().describe("Expected process exit code (default: 0)"),
+  stdoutPattern: z.string().optional().describe("Optional regex that stdout must match"),
+  stderrPattern: z.string().optional().describe("Optional regex that stderr must match"),
+  message: z.string().optional().describe("Custom error message"),
+});
+
+/**
+ * Symbol reference rule - ensure exported symbols are referenced in target files
+ */
+export const symbolReferenceRuleSchema = baseRuleSchema.extend({
+  type: z.literal("symbol-reference"),
+  sourceFiles: z.string().describe("Glob pattern for source files with exported symbols"),
+  targetFiles: z.string().describe("Glob pattern for files where symbols must be referenced"),
+  symbolKinds: z
+    .array(z.enum(["function-declaration", "function-variable"]))
+    .optional()
+    .describe("Kinds of exported symbols to enforce"),
+  symbolPattern: z
+    .string()
+    .optional()
+    .describe("Optional regex filter applied to symbol names before checking"),
+  ignoreSymbols: z.array(z.string()).optional().describe("Symbol names to ignore"),
+  message: z.string().optional().describe("Custom error message"),
+});
+
+/**
  * Union of all custom rule types
  */
 export const customRuleSchema = z.discriminatedUnion("type", [
@@ -100,6 +134,8 @@ export const customRuleSchema = z.discriminatedUnion("type", [
   regexRuleSchema,
   packageFieldsRuleSchema,
   componentLocationRuleSchema,
+  commandRuleSchema,
+  symbolReferenceRuleSchema,
 ]);
 
 /**
@@ -133,6 +169,8 @@ export type FileNamingRule = z.infer<typeof fileNamingRuleSchema>;
 export type RegexRule = z.infer<typeof regexRuleSchema>;
 export type PackageFieldsRule = z.infer<typeof packageFieldsRuleSchema>;
 export type ComponentLocationRule = z.infer<typeof componentLocationRuleSchema>;
+export type CommandRule = z.infer<typeof commandRuleSchema>;
+export type SymbolReferenceRule = z.infer<typeof symbolReferenceRuleSchema>;
 export type CustomRule = z.infer<typeof customRuleSchema>;
 export type SkippedInstruction = z.infer<typeof skippedInstructionSchema>;
 export type ExtractionResponse = z.infer<typeof extractionResponseSchema>;

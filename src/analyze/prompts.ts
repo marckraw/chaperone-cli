@@ -11,7 +11,7 @@ Convert natural language coding guidelines into structured rules that can be che
 
 ## Available Rule Types
 
-You can create two types of rules:
+You can create six types of rules:
 
 ### 1. "regex" - Pattern Matching Rules
 
@@ -106,6 +106,46 @@ Use to ensure certain types of components are in specific folders.
 - "Presentational components should be in src/components/ui/" → componentType: "presentational", requiredLocation: "src/components/ui/", mustBeIn: true
 - "Container components should not be in the ui folder" → componentType: "stateful", requiredLocation: "src/components/ui/", mustBeIn: false
 
+### 5. "command" - Command-based Deterministic Checks
+
+Use for invariants that are best validated by running a command.
+
+**Required fields:**
+- type: "command"
+- id: unique kebab-case identifier
+- command: executable name (for example "npm" or "node")
+- severity: "error" or "warning"
+- source: filename this was extracted from
+- originalText: the verbatim instruction
+
+**Optional fields:**
+- args: command arguments
+- cwd: working directory relative to repo root
+- timeoutMs: timeout for command execution
+- expectedExitCode: expected command exit code (default 0)
+- stdoutPattern: regex that stdout must match
+- stderrPattern: regex that stderr must match
+- message: custom error message
+
+### 6. "symbol-reference" - Export Reference Coverage
+
+Use to require exported symbols from source files to be referenced in target files (for example, exported pure functions referenced in unit tests).
+
+**Required fields:**
+- type: "symbol-reference"
+- id: unique kebab-case identifier
+- sourceFiles: glob for files that export symbols
+- targetFiles: glob for files that must reference those symbols
+- severity: "error" or "warning"
+- source: filename this was extracted from
+- originalText: the verbatim instruction
+
+**Optional fields:**
+- symbolKinds: subset of ["function-declaration", "function-variable"]
+- symbolPattern: regex filter for symbol names
+- ignoreSymbols: symbol names to skip
+- message: custom error message
+
 ## Common Fields (Available on ALL Rule Types)
 
 All rules support these optional fields:
@@ -118,6 +158,10 @@ All rules support these optional fields:
 1. **Choose the right rule type:**
    - Use "regex" for content patterns (forbidden/required code)
    - Use "file-naming" for file structure conventions
+   - Use "package-fields" for package.json invariants
+   - Use "component-location" for presentational/stateful folder boundaries
+   - Use "command" for deterministic command checks
+   - Use "symbol-reference" for export reference checks
 
 2. **Be specific with glob patterns:**
    - Use "src/**/*.ts" for all TypeScript files
@@ -234,10 +278,10 @@ ${file.content}
 
 ${fileContents}
 
-Extract all coding conventions, forbidden patterns, required patterns, and file naming rules that can be checked programmatically.
+Extract all coding conventions, forbidden patterns, required patterns, and file or symbol reference rules that can be checked programmatically.
 
 For each rule:
-- Choose the appropriate type: "regex" for pattern matching, "file-naming" for companion file requirements
+- Choose the appropriate type among: "regex", "file-naming", "package-fields", "component-location", "command", "symbol-reference"
 - Provide a unique kebab-case ID
 - ALWAYS include "source" (the filename) and "originalText" (the verbatim instruction) for traceability
 

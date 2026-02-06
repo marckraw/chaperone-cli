@@ -4,12 +4,16 @@ import { runFileNamingRule, isFileNamingRule } from "./file-naming";
 import { runRegexRule, isRegexRule } from "./regex";
 import { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
 import { runComponentLocationRule, isComponentLocationRule } from "./component-location";
+import { runCommandRule, isCommandRule } from "./command";
+import { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-reference";
 
 export * from "./types";
 export { runFileNamingRule, isFileNamingRule } from "./file-naming";
 export { runRegexRule, isRegexRule } from "./regex";
 export { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
 export { runComponentLocationRule, isComponentLocationRule } from "./component-location";
+export { runCommandRule, isCommandRule } from "./command";
+export { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-reference";
 export { detectAIInstructionFiles } from "./ai-instructions";
 
 /**
@@ -56,6 +60,13 @@ export async function runAllRules(
       const mode = rule.mustBeIn ? "must be in" : "must NOT be in";
       onDebug?.(`  [${typeLabel}] ${rule.id}: ${rule.componentType} components ${mode} "${rule.requiredLocation}"${excludeInfo}`);
       result = await runComponentLocationRule(rule, options);
+    } else if (isCommandRule(rule)) {
+      const commandDisplay = [rule.command, ...(rule.args ?? [])].join(" ").trim();
+      onDebug?.(`  [${typeLabel}] ${rule.id}: running command "${commandDisplay}"`);
+      result = await runCommandRule(rule, options);
+    } else if (isSymbolReferenceRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: checking exported symbols from "${rule.sourceFiles}" against "${rule.targetFiles}"${excludeInfo}`);
+      result = await runSymbolReferenceRule(rule, options);
     }
 
     if (result) {
@@ -131,6 +142,40 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
       }
       if (!rule.requiredLocation) {
         errors.push(`Component location rule '${ruleId}' is missing 'requiredLocation'`);
+      }
+    } else if (isCommandRule(rule)) {
+      if (!rule.command) {
+        errors.push(`Command rule '${ruleId}' is missing 'command'`);
+      }
+
+      if (rule.stdoutPattern) {
+        try {
+          new RegExp(rule.stdoutPattern);
+        } catch {
+          errors.push(`Command rule '${ruleId}' has invalid stdoutPattern: ${rule.stdoutPattern}`);
+        }
+      }
+
+      if (rule.stderrPattern) {
+        try {
+          new RegExp(rule.stderrPattern);
+        } catch {
+          errors.push(`Command rule '${ruleId}' has invalid stderrPattern: ${rule.stderrPattern}`);
+        }
+      }
+    } else if (isSymbolReferenceRule(rule)) {
+      if (!rule.sourceFiles) {
+        errors.push(`Symbol reference rule '${ruleId}' is missing 'sourceFiles'`);
+      }
+      if (!rule.targetFiles) {
+        errors.push(`Symbol reference rule '${ruleId}' is missing 'targetFiles'`);
+      }
+      if (rule.symbolPattern) {
+        try {
+          new RegExp(rule.symbolPattern);
+        } catch {
+          errors.push(`Symbol reference rule '${ruleId}' has invalid symbolPattern: ${rule.symbolPattern}`);
+        }
       }
     } else {
       errors.push(`Rule '${ruleId}' has unknown type: ${ruleType}`);
