@@ -19,6 +19,9 @@ export interface CheckResult {
     expectedValue?: string; // What was expected
     actualValue?: string; // What was found
     componentType?: string; // For component-location: presentational/stateful
+    symbol?: string; // For symbol-reference: symbol that should be referenced
+    command?: string; // For command: executed command
+    exitCode?: number; // For command: actual exit code
     detectedPatterns?: string[]; // What patterns were detected (e.g., hooks found)
   };
 }
@@ -117,9 +120,43 @@ export interface ComponentLocationRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
+ * Command rule - run command-based invariant checks
+ */
+export interface CommandRule extends BaseRule, AIGeneratedMetadata {
+  type: "command";
+  command: string; // Executable to run (e.g., "node", "npm")
+  args?: string[]; // Command arguments
+  cwd?: string; // Optional working directory (relative to project root)
+  timeoutMs?: number; // Optional command timeout (default: 30000)
+  expectedExitCode?: number; // Optional expected exit code (default: 0)
+  stdoutPattern?: string; // Optional regex that stdout must match
+  stderrPattern?: string; // Optional regex that stderr must match
+  message?: string;
+}
+
+/**
+ * Symbol reference rule - ensure exported symbols are referenced in target files
+ */
+export interface SymbolReferenceRule extends BaseRule, AIGeneratedMetadata {
+  type: "symbol-reference";
+  sourceFiles: string; // Glob for source files that define exported symbols
+  targetFiles: string; // Glob for files where symbols must be referenced
+  symbolKinds?: Array<"function-declaration" | "function-variable">;
+  symbolPattern?: string; // Optional regex to filter symbol names
+  ignoreSymbols?: string[]; // Symbols to ignore
+  message?: string;
+}
+
+/**
  * Union of all custom rule types
  */
-export type CustomRule = FileNamingRule | RegexRule | PackageFieldsRule | ComponentLocationRule;
+export type CustomRule =
+  | FileNamingRule
+  | RegexRule
+  | PackageFieldsRule
+  | ComponentLocationRule
+  | CommandRule
+  | SymbolReferenceRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead

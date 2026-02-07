@@ -129,6 +129,39 @@ export function validateConfig(config: ChaperoneConfig): string[] {
           errors.push(`Regex rule '${ruleId}' is missing 'message'`);
         }
       }
+
+      if (ruleType === "package-fields") {
+        if (!rule.requiredFields || !Array.isArray(rule.requiredFields) || rule.requiredFields.length === 0) {
+          errors.push(`Package fields rule '${ruleId}' is missing 'requiredFields'`);
+        }
+      }
+
+      if (ruleType === "component-location") {
+        if (!rule.files) {
+          errors.push(`Component location rule '${ruleId}' is missing 'files'`);
+        }
+        if (!rule.componentType) {
+          errors.push(`Component location rule '${ruleId}' is missing 'componentType'`);
+        }
+        if (!rule.requiredLocation) {
+          errors.push(`Component location rule '${ruleId}' is missing 'requiredLocation'`);
+        }
+      }
+
+      if (ruleType === "command") {
+        if (!rule.command) {
+          errors.push(`Command rule '${ruleId}' is missing 'command'`);
+        }
+      }
+
+      if (ruleType === "symbol-reference") {
+        if (!rule.sourceFiles) {
+          errors.push(`Symbol reference rule '${ruleId}' is missing 'sourceFiles'`);
+        }
+        if (!rule.targetFiles) {
+          errors.push(`Symbol reference rule '${ruleId}' is missing 'targetFiles'`);
+        }
+      }
     }
   }
 

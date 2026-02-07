@@ -77,6 +77,116 @@ chaperone help
 chaperone version
 ```
 
+## Custom Rule Types
+
+Chaperone supports custom rules in `.chaperone.json` under `rules.custom`.
+
+```json
+{
+  "rules": {
+    "custom": []
+  }
+}
+```
+
+### `regex`
+
+Use for forbidden/required code patterns.
+
+```json
+{
+  "type": "regex",
+  "id": "no-console-log",
+  "severity": "error",
+  "files": "src/**/*.{ts,tsx}",
+  "pattern": "console\\.log\\(",
+  "message": "console.log is forbidden"
+}
+```
+
+### `file-naming`
+
+Use for companion file requirements.
+
+```json
+{
+  "type": "file-naming",
+  "id": "component-needs-test",
+  "severity": "error",
+  "pattern": "src/**/*.tsx",
+  "requireCompanion": {
+    "transform": "$1.test.tsx"
+  },
+  "message": "Each component must have a test file"
+}
+```
+
+### `package-fields`
+
+Use for package.json invariants.
+
+```json
+{
+  "type": "package-fields",
+  "id": "require-build-script",
+  "severity": "error",
+  "requiredFields": ["scripts.build"]
+}
+```
+
+### `component-location`
+
+Use to keep presentational/stateful components in expected folders.
+
+```json
+{
+  "type": "component-location",
+  "id": "presentational-in-ui",
+  "severity": "error",
+  "files": "src/**/*.tsx",
+  "componentType": "presentational",
+  "requiredLocation": "src/components/ui/**",
+  "mustBeIn": true
+}
+```
+
+### `command`
+
+Use for deterministic command-based checks.
+
+```json
+{
+  "type": "command",
+  "id": "unit-tests-pass",
+  "severity": "error",
+  "command": "npm",
+  "args": ["run", "test:unit"],
+  "expectedExitCode": 0,
+  "message": "Unit tests must pass"
+}
+```
+
+### `symbol-reference`
+
+Use to ensure exported symbols from source files are referenced in target files.
+
+```json
+{
+  "type": "symbol-reference",
+  "id": "pure-functions-tested",
+  "severity": "error",
+  "sourceFiles": "src/**/*.pure.ts",
+  "targetFiles": "tests/unit/**/*.test.ts",
+  "symbolKinds": ["function-declaration", "function-variable"],
+  "message": "Exported pure functions must be referenced in unit tests"
+}
+```
+
+`symbol-reference` options:
+- `symbolPattern`: regex filter for symbol names.
+- `ignoreSymbols`: explicit symbol names to skip.
+- `exclude`: per-rule glob exclusions (same as other custom rule types).
+
 ## CI Integration
 
 Add Chaperone to your CI pipeline to catch convention violations before merge:
@@ -86,6 +196,42 @@ Add Chaperone to your CI pipeline to catch convention violations before merge:
 - name: Run Chaperone
   run: chaperone check
 ```
+
+## Release Process
+
+This repository uses **Changesets** for version control and **GitHub Actions** for binary releases.
+
+Target branch: `master`
+
+### 1) Feature PRs
+
+For user-facing/code changes, include a changeset:
+
+```bash
+bun run changeset
+```
+
+The PR check (`Changeset Check`) enforces this for changes under `src/`, `build.ts`, or `package.json`.
+
+### 2) Version PRs
+
+On pushes to `master`, `Changeset Version PR` runs and opens/updates a version PR using `changesets/action`.
+
+### 3) Binary Releases
+
+After version bumps land on `master`, `Release Binaries`:
+- reads `package.json` version,
+- creates `v<version>` tag if missing,
+- builds Bun executables for all targets,
+- generates `SHA256SUMS.txt`,
+- publishes assets to GitHub Releases.
+
+Release assets include:
+- `chaperone-darwin-arm64`
+- `chaperone-darwin-x64`
+- `chaperone-linux-x64`
+- `chaperone-linux-arm64`
+- `chaperone-windows-x64.exe`
 
 ## Development
 
