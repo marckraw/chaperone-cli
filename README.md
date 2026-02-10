@@ -121,6 +121,56 @@ Use for companion file requirements.
 }
 ```
 
+### `file-pairing`
+
+Use for path-based file pairing where simple basename transforms are not enough.
+
+```json
+{
+  "type": "file-pairing",
+  "id": "migration-has-validator",
+  "severity": "error",
+  "files": "src/storyblok/migrations/**/*.sb.migration.ts",
+  "pair": {
+    "from": "\\.sb\\.migration\\.ts$",
+    "to": ".validation.ts"
+  },
+  "mustExist": true,
+  "requireTransformMatch": true,
+  "message": "Each runnable migration must have a co-located validator"
+}
+```
+
+### `file-contract`
+
+Use for deterministic content contracts per file, including filename-derived placeholders.
+
+```json
+{
+  "type": "file-contract",
+  "id": "validator-id-and-name-match-file",
+  "severity": "error",
+  "files": "src/storyblok/migrations/**/*.validation.ts",
+  "captureFromPath": {
+    "pattern": "([^/]+)\\.validation\\.ts$",
+    "group": 1
+  },
+  "requiredPatterns": [
+    "defineMigrationValidation\\s*\\(",
+    "export\\s+default\\s+"
+  ],
+  "requiredAnyPatterns": [
+    "ruleSet\\s*:",
+    "validateData\\s*:",
+    "validateFile\\s*:"
+  ],
+  "templatedRequiredPatterns": [
+    "id\\s*:\\s*['\"]{{capture}}['\"]",
+    "name\\s*:\\s*['\"]{{capture}}['\"]"
+  ]
+}
+```
+
 ### `package-fields`
 
 Use for package.json invariants.

@@ -1,6 +1,8 @@
 import type { ChaperoneConfig, CheckResult, CustomRule } from "../types";
 import type { RuleRunnerOptions, RuleResult } from "./types";
 import { runFileNamingRule, isFileNamingRule } from "./file-naming";
+import { runFilePairingRule, isFilePairingRule } from "./file-pairing";
+import { runFileContractRule, isFileContractRule } from "./file-contract";
 import { runRegexRule, isRegexRule } from "./regex";
 import { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
 import { runComponentLocationRule, isComponentLocationRule } from "./component-location";
@@ -9,6 +11,8 @@ import { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-referenc
 
 export * from "./types";
 export { runFileNamingRule, isFileNamingRule } from "./file-naming";
+export { runFilePairingRule, isFilePairingRule } from "./file-pairing";
+export { runFileContractRule, isFileContractRule } from "./file-contract";
 export { runRegexRule, isRegexRule } from "./regex";
 export { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
 export { runComponentLocationRule, isComponentLocationRule } from "./component-location";
@@ -49,6 +53,12 @@ export async function runAllRules(
     if (isFileNamingRule(rule)) {
       onDebug?.(`  [${typeLabel}] ${rule.id}: checking pattern "${rule.pattern}"${excludeInfo}`);
       result = await runFileNamingRule(rule, options);
+    } else if (isFilePairingRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: checking pairing for "${rule.files}"${excludeInfo}`);
+      result = await runFilePairingRule(rule, options);
+    } else if (isFileContractRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: checking file contract in "${rule.files}"${excludeInfo}`);
+      result = await runFileContractRule(rule, options);
     } else if (isRegexRule(rule)) {
       const mode = rule.mustMatch ? "must match" : "must NOT match";
       onDebug?.(`  [${typeLabel}] ${rule.id}: ${mode} /${rule.pattern}/ in "${rule.files}"${excludeInfo}`);
@@ -110,6 +120,64 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
     if (isFileNamingRule(rule)) {
       if (!rule.pattern) {
         errors.push(`File naming rule '${ruleId}' is missing 'pattern'`);
+      }
+    } else if (isFilePairingRule(rule)) {
+      if (!rule.files) {
+        errors.push(`File pairing rule '${ruleId}' is missing 'files'`);
+      }
+      if (!rule.pair?.from) {
+        errors.push(`File pairing rule '${ruleId}' is missing 'pair.from'`);
+      }
+      if (!rule.pair?.to) {
+        errors.push(`File pairing rule '${ruleId}' is missing 'pair.to'`);
+      }
+      if (rule.pair?.from) {
+        try {
+          new RegExp(rule.pair.from);
+        } catch {
+          errors.push(`File pairing rule '${ruleId}' has invalid pair.from regex: ${rule.pair.from}`);
+        }
+      }
+    } else if (isFileContractRule(rule)) {
+      if (!rule.files) {
+        errors.push(`File contract rule '${ruleId}' is missing 'files'`);
+      }
+
+      const hasContract =
+        !!rule.requiredPatterns?.length ||
+        !!rule.requiredAnyPatterns?.length ||
+        !!rule.forbiddenPatterns?.length ||
+        !!rule.templatedRequiredPatterns?.length ||
+        !!rule.templatedRequiredAnyPatterns?.length ||
+        !!rule.templatedForbiddenPatterns?.length;
+
+      if (!hasContract) {
+        errors.push(`File contract rule '${ruleId}' must define at least one contract pattern list`);
+      }
+
+      const patternBuckets = [
+        ...(rule.requiredPatterns ?? []),
+        ...(rule.requiredAnyPatterns ?? []),
+        ...(rule.forbiddenPatterns ?? []),
+        ...(rule.templatedRequiredPatterns ?? []),
+        ...(rule.templatedRequiredAnyPatterns ?? []),
+        ...(rule.templatedForbiddenPatterns ?? []),
+      ];
+
+      for (const pattern of patternBuckets) {
+        try {
+          new RegExp(pattern);
+        } catch {
+          errors.push(`File contract rule '${ruleId}' has invalid regex pattern: ${pattern}`);
+        }
+      }
+
+      if (rule.captureFromPath?.pattern) {
+        try {
+          new RegExp(rule.captureFromPath.pattern);
+        } catch {
+          errors.push(`File contract rule '${ruleId}' has invalid captureFromPath.pattern: ${rule.captureFromPath.pattern}`);
+        }
       }
     } else if (isRegexRule(rule)) {
       if (!rule.pattern) {

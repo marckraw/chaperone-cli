@@ -118,6 +118,26 @@ export function validateConfig(config: ChaperoneConfig): string[] {
         }
       }
 
+      if (ruleType === "file-pairing") {
+        if (!rule.files) {
+          errors.push(`File pairing rule '${ruleId}' is missing 'files'`);
+        }
+
+        if (!rule.pair?.from) {
+          errors.push(`File pairing rule '${ruleId}' is missing 'pair.from'`);
+        }
+
+        if (!rule.pair?.to) {
+          errors.push(`File pairing rule '${ruleId}' is missing 'pair.to'`);
+        }
+      }
+
+      if (ruleType === "file-contract") {
+        if (!rule.files) {
+          errors.push(`File contract rule '${ruleId}' is missing 'files'`);
+        }
+      }
+
       if (ruleType === "regex") {
         if (!rule.pattern) {
           errors.push(`Regex rule '${ruleId}' is missing 'pattern'`);

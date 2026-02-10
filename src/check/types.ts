@@ -85,6 +85,41 @@ export interface FileNamingRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
+ * File pairing rule - map each matched file path to a companion path and enforce existence/non-existence
+ */
+export interface FilePairingRule extends BaseRule, AIGeneratedMetadata {
+  type: "file-pairing";
+  files: string; // Glob for source files
+  pair: {
+    from: string; // Regex pattern applied to relative file path
+    to: string; // Replacement string
+  };
+  mustExist?: boolean; // true = companion must exist, false = companion must NOT exist
+  requireTransformMatch?: boolean; // true = rule errors when pair.from doesn't match a file path
+  message?: string;
+}
+
+/**
+ * File contract rule - enforce required/forbidden content patterns per file with optional filename capture templating
+ */
+export interface FileContractRule extends BaseRule, AIGeneratedMetadata {
+  type: "file-contract";
+  files: string; // Glob for files to check
+  requiredPatterns?: string[]; // Patterns that must match each file
+  requiredAnyPatterns?: string[]; // At least one pattern must match each file
+  forbiddenPatterns?: string[]; // Patterns that must not match each file
+  captureFromPath?: {
+    pattern: string; // Regex pattern applied to file path or basename
+    group?: number | string; // Capture group index or named group
+    source?: "path" | "basename"; // Defaults to path
+  };
+  templatedRequiredPatterns?: string[]; // Supports {{capture}} placeholder
+  templatedRequiredAnyPatterns?: string[]; // Supports {{capture}} placeholder
+  templatedForbiddenPatterns?: string[]; // Supports {{capture}} placeholder
+  message?: string;
+}
+
+/**
  * Regex rule - search for forbidden/required patterns
  */
 export interface RegexRule extends BaseRule, AIGeneratedMetadata {
@@ -152,6 +187,8 @@ export interface SymbolReferenceRule extends BaseRule, AIGeneratedMetadata {
  */
 export type CustomRule =
   | FileNamingRule
+  | FilePairingRule
+  | FileContractRule
   | RegexRule
   | PackageFieldsRule
   | ComponentLocationRule

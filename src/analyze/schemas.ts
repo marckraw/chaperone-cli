@@ -38,6 +38,58 @@ export const fileNamingRuleSchema = baseRuleSchema.extend({
 });
 
 /**
+ * File pairing rule - map each file path to a companion path and enforce existence/non-existence
+ */
+export const filePairingRuleSchema = baseRuleSchema.extend({
+  type: z.literal("file-pairing"),
+  files: z.string().describe("Glob pattern for source files to check"),
+  pair: z.object({
+    from: z.string().describe("Regex pattern applied to relative file path"),
+    to: z.string().describe("Replacement string for companion file path"),
+  }),
+  mustExist: z.boolean().optional().describe("If true, companion must exist; if false, companion must NOT exist"),
+  requireTransformMatch: z
+    .boolean()
+    .optional()
+    .describe("If true, fail when pair.from does not match a file path"),
+  message: z.string().optional().describe("Custom error message"),
+});
+
+/**
+ * File contract rule - enforce required/forbidden content patterns per file with optional filename capture
+ */
+export const fileContractRuleSchema = baseRuleSchema.extend({
+  type: z.literal("file-contract"),
+  files: z.string().describe("Glob pattern for files to check"),
+  requiredPatterns: z.array(z.string()).optional().describe("Regex patterns that must match each file"),
+  requiredAnyPatterns: z
+    .array(z.string())
+    .optional()
+    .describe("At least one of these regex patterns must match each file"),
+  forbiddenPatterns: z.array(z.string()).optional().describe("Regex patterns that must not match"),
+  captureFromPath: z
+    .object({
+      pattern: z.string().describe("Regex applied to file path or basename"),
+      group: z.union([z.number().int(), z.string()]).optional().describe("Capture group index or name"),
+      source: z.enum(["path", "basename"]).optional().describe("Capture source (default: path)"),
+    })
+    .optional(),
+  templatedRequiredPatterns: z
+    .array(z.string())
+    .optional()
+    .describe("Required regex patterns with {{capture}} placeholder"),
+  templatedRequiredAnyPatterns: z
+    .array(z.string())
+    .optional()
+    .describe("RequiredAny regex patterns with {{capture}} placeholder"),
+  templatedForbiddenPatterns: z
+    .array(z.string())
+    .optional()
+    .describe("Forbidden regex patterns with {{capture}} placeholder"),
+  message: z.string().optional().describe("Custom error message"),
+});
+
+/**
  * Regex rule - search for forbidden/required patterns
  */
 export const regexRuleSchema = baseRuleSchema.extend({
@@ -131,6 +183,8 @@ export const symbolReferenceRuleSchema = baseRuleSchema.extend({
  */
 export const customRuleSchema = z.discriminatedUnion("type", [
   fileNamingRuleSchema,
+  filePairingRuleSchema,
+  fileContractRuleSchema,
   regexRuleSchema,
   packageFieldsRuleSchema,
   componentLocationRuleSchema,
@@ -166,6 +220,8 @@ export const extractionResponseSchema = z.object({
  * Type exports for use in other modules
  */
 export type FileNamingRule = z.infer<typeof fileNamingRuleSchema>;
+export type FilePairingRule = z.infer<typeof filePairingRuleSchema>;
+export type FileContractRule = z.infer<typeof fileContractRuleSchema>;
 export type RegexRule = z.infer<typeof regexRuleSchema>;
 export type PackageFieldsRule = z.infer<typeof packageFieldsRuleSchema>;
 export type ComponentLocationRule = z.infer<typeof componentLocationRuleSchema>;
