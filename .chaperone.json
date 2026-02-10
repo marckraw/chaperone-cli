@@ -114,6 +114,125 @@
           "scripts.build": "^bun\\s+"
         },
         "message": "Package.json scripts must use 'bun' commands, not npm/yarn/pnpm"
+      },
+
+      {
+        "id": "module-boundaries",
+        "type": "import-boundary",
+        "severity": "error",
+        "layers": {
+          "utils": {
+            "files": "src/utils/**/*.ts",
+            "allowImportsFrom": []
+          },
+          "presets": {
+            "files": "src/presets/**/*.ts",
+            "allowImportsFrom": ["check-types"]
+          },
+          "check-types": {
+            "files": "src/check/types.ts",
+            "allowImportsFrom": []
+          },
+          "check-rule-types": {
+            "files": "src/check/rules/types.ts",
+            "allowImportsFrom": ["check-types"]
+          },
+          "check-rules": {
+            "files": "src/check/rules/*.ts",
+            "allowImportsFrom": ["utils", "check-types", "check-rule-types"]
+          },
+          "check-runners": {
+            "files": "src/check/runners/*.ts",
+            "allowImportsFrom": ["utils", "check-types"]
+          },
+          "check-formatters": {
+            "files": "src/check/formatters/*.ts",
+            "allowImportsFrom": ["utils", "check-types"]
+          },
+          "check": {
+            "files": "src/check/index.ts",
+            "allowImportsFrom": ["utils", "check-types", "check-rules", "check-rule-types", "check-runners", "check-formatters"]
+          }
+        }
+      },
+
+      {
+        "id": "module-structure",
+        "type": "file-structure",
+        "severity": "warning",
+        "parentDirs": "src/*",
+        "required": ["index.ts"],
+        "strict": false,
+        "message": "Each top-level module must have an index.ts barrel file"
+      },
+
+      {
+        "id": "rule-runner-contract",
+        "type": "file-contract",
+        "severity": "error",
+        "files": "src/check/rules/*.ts",
+        "exclude": ["src/check/rules/index.ts", "src/check/rules/types.ts", "src/check/rules/ai-instructions.ts"],
+        "assertions": {
+          "mustBeModule": true,
+          "mustExportNamed": true
+        },
+        "requiredPatterns": [
+          "export async function run\\w+Rule",
+          "export function is\\w+Rule"
+        ],
+        "message": "Rule files must export a runXxxRule async function and an isXxxRule type guard"
+      },
+
+      {
+        "id": "utils-isolation",
+        "type": "forbidden-import",
+        "severity": "error",
+        "files": "src/utils/**/*.ts",
+        "restrictions": [
+          {
+            "source": "\\.\\./(check|init|analyze|presets)/",
+            "allowedIn": [],
+            "message": "Utils must not import from application modules (check, init, analyze, presets)"
+          }
+        ]
+      },
+
+      {
+        "id": "rules-no-cross-module",
+        "type": "forbidden-import",
+        "severity": "error",
+        "files": "src/check/rules/*.ts",
+        "exclude": ["src/check/rules/index.ts"],
+        "restrictions": [
+          {
+            "source": "\\.\\./(runners|formatters)/",
+            "allowedIn": [],
+            "message": "Rule implementations must not import from runners or formatters"
+          }
+        ]
+      },
+
+      {
+        "id": "no-deprecated-paths",
+        "type": "retired-path",
+        "severity": "error",
+        "paths": [
+          {
+            "pattern": "src/helpers/**/*",
+            "reason": "Use src/utils/ for utility functions",
+            "migratedTo": "src/utils/"
+          },
+          {
+            "pattern": "src/lib/**/*",
+            "reason": "Use src/utils/ for shared libraries",
+            "migratedTo": "src/utils/"
+          },
+          {
+            "pattern": "src/types/**/*",
+            "reason": "Types belong in their module's types.ts file",
+            "migratedTo": "src/<module>/types.ts"
+          }
+        ]
       }
     ]
   },
