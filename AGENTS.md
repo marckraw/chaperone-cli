@@ -46,5 +46,5 @@ bunx changeset              # Interactive prompt for package, bump type, summary
 
 - Use `.ts` extension for all TypeScript files (no `.tsx` needed - this is a CLI tool)
 - Keep modules focused and single-purpose
-- Prefer pure (side-effect-free) functions whenever possible—they’re easier to test and reason about. Isolate side effects (I/O, network, DB, filesystem, time, randomness) at the edges.
+- Prefer pure (side-effect-free) functions whenever possible—they're easier to test and reason about. Isolate side effects (I/O, network, DB, filesystem, time, randomness) at the edges.
 - Export types from their respective modules
