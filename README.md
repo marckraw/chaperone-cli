@@ -28,19 +28,19 @@ Chaperone ships as a single self-contained executable — no runtime, no depende
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone/master/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | sh
 ```
 
 With a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone/master/scripts/install.sh | CHAPERONE_VERSION=0.3.0 sh
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.3.0 sh
 ```
 
 Custom install directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone/master/scripts/install.sh | CHAPERONE_INSTALL_DIR="$HOME/.local/bin" sh
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
 The install script auto-detects your OS and architecture, downloads the correct binary, verifies the SHA256 checksum, and installs it. If `/usr/local/bin` is not writable, it falls back to `~/.local/bin`.
@@ -48,13 +48,13 @@ The install script auto-detects your OS and architecture, downloads the correct 
 **Windows (PowerShell):**
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-windows-x64.exe" -OutFile "$env:LOCALAPPDATA\chaperone.exe"
+Invoke-WebRequest -Uri "https://github.com/marckraw/chaperone-cli/releases/latest/download/chaperone-windows-x64.exe" -OutFile "$env:LOCALAPPDATA\chaperone.exe"
 # Add $env:LOCALAPPDATA to your PATH, or move chaperone.exe somewhere already in PATH
 ```
 
 ### Manual Download
 
-1. Go to the [latest release](https://github.com/marckraw/chaperone/releases/latest)
+1. Go to the [latest release](https://github.com/marckraw/chaperone-cli/releases/latest)
 2. Download the binary for your platform:
 
    | Platform | Binary |
@@ -81,7 +81,7 @@ chaperone --version
 
 ```bash
 # Clone the repository
-git clone https://github.com/marckraw/chaperone.git
+git clone https://github.com/marckraw/chaperone-cli.git
 cd chaperone
 
 # Install Bun if you haven't already

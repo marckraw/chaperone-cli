@@ -8,8 +8,8 @@ const CACHE_FILE = join(CACHE_DIR, "update-check.json");
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const FETCH_TIMEOUT_MS = 3000;
 const GITHUB_RELEASES_URL =
-  "https://api.github.com/repos/marckraw/chaperone/releases/latest";
-const DOWNLOAD_URL = "https://github.com/marckraw/chaperone/releases/latest";
+  "https://api.github.com/repos/marckraw/chaperone-cli/releases/latest";
+const DOWNLOAD_URL = "https://github.com/marckraw/chaperone-cli/releases/latest";
 
 export interface UpdateCache {
   lastChecked: number;

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="${CHAPERONE_REPO:-marckraw/chaperone}"
+REPO="${CHAPERONE_REPO:-marckraw/chaperone-cli}"
 VERSION="${CHAPERONE_VERSION:-latest}"
 INSTALL_DIR="${CHAPERONE_INSTALL_DIR:-/usr/local/bin}"
 

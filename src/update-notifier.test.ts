@@ -116,7 +116,7 @@ describe("formatUpdateNotice", () => {
   test("contains download URL", () => {
     const notice = formatUpdateNotice("1.0.0", "2.0.0");
     expect(notice).toContain(
-      "https://github.com/marckraw/chaperone/releases/latest",
+      "https://github.com/marckraw/chaperone-cli/releases/latest",
     );
   });
 });
