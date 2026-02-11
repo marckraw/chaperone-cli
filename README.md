@@ -21,11 +21,100 @@ In AI-assisted workflows, code gets generated fast — but it doesn't always fol
 
 ## Installation
 
+Chaperone ships as a single self-contained executable — no runtime, no dependencies. Pick the method that suits you.
+
+### Quick Install (recommended)
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') -o chaperone \
+  && chmod +x chaperone \
+  && sudo mv chaperone /usr/local/bin/
+```
+
+Or without `sudo` (user-local install):
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') -o ~/.local/bin/chaperone \
+  && chmod +x ~/.local/bin/chaperone
+```
+
+> Make sure `~/.local/bin` is in your `PATH`. Add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile if needed.
+
+**Windows (PowerShell):**
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-windows-x64.exe" -OutFile "$env:LOCALAPPDATA\chaperone.exe"
+# Add $env:LOCALAPPDATA to your PATH, or move chaperone.exe somewhere already in PATH
+```
+
+### Using GitHub CLI
+
+If you have [`gh`](https://cli.github.com/) installed:
+
+```bash
+# macOS Apple Silicon
+gh release download --repo marckraw/chaperone --pattern 'chaperone-darwin-arm64' --output chaperone --clobber
+chmod +x chaperone && sudo mv chaperone /usr/local/bin/
+
+# macOS Intel
+gh release download --repo marckraw/chaperone --pattern 'chaperone-darwin-x64' --output chaperone --clobber
+chmod +x chaperone && sudo mv chaperone /usr/local/bin/
+
+# Linux x64
+gh release download --repo marckraw/chaperone --pattern 'chaperone-linux-x64' --output chaperone --clobber
+chmod +x chaperone && sudo mv chaperone /usr/local/bin/
+
+# Linux ARM64
+gh release download --repo marckraw/chaperone --pattern 'chaperone-linux-arm64' --output chaperone --clobber
+chmod +x chaperone && sudo mv chaperone /usr/local/bin/
+```
+
+### Manual Download
+
+1. Go to the [latest release](https://github.com/marckraw/chaperone/releases/latest)
+2. Download the binary for your platform:
+
+   | Platform | Binary |
+   |----------|--------|
+   | macOS (Apple Silicon) | `chaperone-darwin-arm64` |
+   | macOS (Intel) | `chaperone-darwin-x64` |
+   | Linux (x64) | `chaperone-linux-x64` |
+   | Linux (ARM64) | `chaperone-linux-arm64` |
+   | Windows (x64) | `chaperone-windows-x64.exe` |
+
+3. Make it executable and move to your PATH:
+   ```bash
+   chmod +x chaperone-*
+   sudo mv chaperone-* /usr/local/bin/chaperone
+   ```
+
+### Verify Installation
+
+```bash
+chaperone --version
+```
+
+Optionally verify the checksum against `SHA256SUMS.txt` from the release:
+
+```bash
+# Download the checksums file
+curl -fsSL https://github.com/marckraw/chaperone/releases/latest/download/SHA256SUMS.txt -o SHA256SUMS.txt
+
+# Verify (macOS)
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+
+# Verify (Linux)
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
+
 ### From Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/chaperone.git
+git clone https://github.com/marckraw/chaperone.git
 cd chaperone
 
 # Install Bun if you haven't already
@@ -35,13 +124,9 @@ cd chaperone
 bun run src/cli.ts --help
 
 # Or build a standalone executable
-bun run build.ts
+bun run build
 ./bin/chaperone-darwin-arm64 --help  # macOS Apple Silicon
 ```
-
-### Pre-built Binaries
-
-Download the appropriate binary for your platform from the releases page.
 
 ## Quick Start
 
