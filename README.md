@@ -121,6 +121,56 @@ Use for companion file requirements.
 }
 ```
 
+### `file-pairing`
+
+Use for path-based file pairing where simple basename transforms are not enough.
+
+```json
+{
+  "type": "file-pairing",
+  "id": "migration-has-validator",
+  "severity": "error",
+  "files": "src/storyblok/migrations/**/*.sb.migration.ts",
+  "pair": {
+    "from": "\\.sb\\.migration\\.ts$",
+    "to": ".validation.ts"
+  },
+  "mustExist": true,
+  "requireTransformMatch": true,
+  "message": "Each runnable migration must have a co-located validator"
+}
+```
+
+### `file-contract`
+
+Use for deterministic content contracts per file, including filename-derived placeholders.
+
+```json
+{
+  "type": "file-contract",
+  "id": "validator-id-and-name-match-file",
+  "severity": "error",
+  "files": "src/storyblok/migrations/**/*.validation.ts",
+  "captureFromPath": {
+    "pattern": "([^/]+)\\.validation\\.ts$",
+    "group": 1
+  },
+  "requiredPatterns": [
+    "defineMigrationValidation\\s*\\(",
+    "export\\s+default\\s+"
+  ],
+  "requiredAnyPatterns": [
+    "ruleSet\\s*:",
+    "validateData\\s*:",
+    "validateFile\\s*:"
+  ],
+  "templatedRequiredPatterns": [
+    "id\\s*:\\s*['\"]{{capture}}['\"]",
+    "name\\s*:\\s*['\"]{{capture}}['\"]"
+  ]
+}
+```
+
 ### `package-fields`
 
 Use for package.json invariants.
@@ -186,6 +236,302 @@ Use to ensure exported symbols from source files are referenced in target files.
 - `symbolPattern`: regex filter for symbol names.
 - `ignoreSymbols`: explicit symbol names to skip.
 - `exclude`: per-rule glob exclusions (same as other custom rule types).
+
+### `retired-path`
+
+Use to prevent files from being created in deprecated or legacy directories. Catches AI agents that create files in old locations.
+
+```json
+{
+  "type": "retired-path",
+  "id": "no-legacy-dirs",
+  "severity": "error",
+  "paths": [
+    { "pattern": "src/components/**/*", "reason": "Use layered architecture", "migratedTo": "src/features/<feature>/ui/" },
+    { "pattern": "src/hooks/**/*", "migratedTo": "src/features/<feature>/model/" },
+    { "pattern": "src/lib/**/*", "migratedTo": "src/shared/lib/" }
+  ]
+}
+```
+
+Each `paths` entry:
+- `pattern` (required): glob for the retired location.
+- `reason`: why this path is retired.
+- `migratedTo`: where files should go instead.
+
+### `file-suffix-content`
+
+Use to enforce content conventions on files with a specific suffix. Produces clear, named error messages instead of raw regex.
+
+```json
+{
+  "type": "file-suffix-content",
+  "id": "presentational-purity",
+  "severity": "error",
+  "suffix": ".presentational.tsx",
+  "files": "src/**/*.tsx",
+  "forbiddenPatterns": [
+    { "pattern": "\\buseEffect\\s*\\(", "name": "useEffect" },
+    { "pattern": "\\buseState\\s*\\(", "name": "useState" },
+    { "pattern": "\\bfetch\\s*\\(", "name": "fetch" }
+  ],
+  "requiredPatterns": [
+    { "pattern": "export default", "name": "default export" }
+  ]
+}
+```
+
+Options:
+- `suffix` (required): file suffix to match (e.g., `.styles.ts`, `.store.ts`, `.presentational.tsx`).
+- `files` (required): glob scope.
+- `forbiddenPatterns`: array of `{ pattern, name }` — each pattern must NOT match.
+- `requiredPatterns`: array of `{ pattern, name }` — each pattern MUST match.
+
+### `file-structure`
+
+Use to enforce directory conventions like feature folder structure.
+
+```json
+{
+  "type": "file-structure",
+  "id": "feature-folder-structure",
+  "severity": "error",
+  "parentDirs": "src/features/*",
+  "required": ["ui", "index.ts"],
+  "optional": ["lib", "model", "api", "service"],
+  "strict": true
+}
+```
+
+Options:
+- `parentDirs` (required): glob for parent directories to check (e.g., `src/features/*`).
+- `required` (required): entries that must exist in each matched directory.
+- `optional`: entries that may exist.
+- `strict`: if `true`, any entry not in `required` or `optional` is a violation.
+
+### `forbidden-import`
+
+Use to restrict which files can import from specific modules or use specific patterns. Replaces complex ESLint `no-restricted-imports` configs.
+
+```json
+{
+  "type": "forbidden-import",
+  "id": "tauri-api-boundary",
+  "severity": "error",
+  "files": "src/**/*.{ts,tsx}",
+  "restrictions": [
+    {
+      "source": "^@tauri-apps/",
+      "allowedIn": ["src/**/*.api.ts"],
+      "message": "Tauri APIs can only be used in .api.ts files"
+    }
+  ],
+  "checkPatterns": [
+    {
+      "pattern": "\\binvoke\\s*\\(",
+      "allowedIn": ["src/**/*.api.ts"],
+      "message": "invoke() can only be used in .api.ts files"
+    }
+  ],
+  "includeTypeImports": false
+}
+```
+
+Options:
+- `files` (required): glob for files to scan.
+- `restrictions`: array of import restrictions. Each has:
+  - `source` (required): regex matching the import specifier.
+  - `allowedIn` (required): globs for files where this import IS allowed.
+  - `message`: custom error message.
+- `checkPatterns`: array of code pattern restrictions (same shape as restrictions but matches code, not imports).
+- `includeTypeImports`: whether to check `import type` statements (default: `false` — type imports are usually safe).
+
+### `import-boundary`
+
+Use to enforce architectural layer boundaries. Prevents imports across layers that violate your dependency direction.
+
+```json
+{
+  "type": "import-boundary",
+  "id": "fsd-layers",
+  "severity": "error",
+  "layers": {
+    "shared":   { "files": "src/shared/**/*.{ts,tsx}",   "allowImportsFrom": [] },
+    "entities": { "files": "src/entities/**/*.{ts,tsx}",  "allowImportsFrom": ["shared"] },
+    "features": { "files": "src/features/**/*.{ts,tsx}",  "allowImportsFrom": ["shared", "entities"] },
+    "widgets":  { "files": "src/widgets/**/*.{ts,tsx}",   "allowImportsFrom": ["shared", "entities", "features"] },
+    "app":      { "files": "src/app/**/*.{ts,tsx}",       "allowImportsFrom": ["shared", "entities", "features", "widgets"] }
+  }
+}
+```
+
+Options:
+- `layers` (required): map of layer name → config. Each layer has:
+  - `files` (required): glob for files belonging to this layer.
+  - `allowImportsFrom` (required): list of layer names this layer can import from.
+- Self-layer imports are always implicitly allowed (a shared file can import from another shared file).
+- `includeTypeImports`: check `import type` statements (default: `true`).
+- `includeDynamicImports`: check `import()` expressions (default: `true`).
+
+### `public-api`
+
+Use to enforce that modules are imported through their barrel file (`index.ts`), not via deep imports into internal files.
+
+```json
+{
+  "type": "public-api",
+  "id": "feature-public-api",
+  "severity": "error",
+  "modules": "src/features/*",
+  "files": "src/**/*.{ts,tsx}",
+  "barrelFile": "index.ts",
+  "allowSameModule": true
+}
+```
+
+Options:
+- `modules` (required): glob for module root directories.
+- `files` (required): glob for files to check.
+- `barrelFile`: name of the barrel file (default: `index.ts`).
+- `allowSameModule`: allow deep imports within the same module (default: `true`).
+
+### `relationship`
+
+Use for composite "if A then B" rules — when a file exists, enforce conditions on the file and/or its companion.
+
+```json
+{
+  "type": "relationship",
+  "id": "container-needs-presentational",
+  "severity": "error",
+  "when": { "files": "src/**/*.container.tsx" },
+  "then": [
+    { "mustHaveCompanion": { "suffix": ".presentational.tsx" } },
+    { "mustImport": { "companion": true } },
+    { "companionMustNot": { "patterns": ["\\buseEffect", "\\buseState"] } },
+    { "maxLines": 150 }
+  ]
+}
+```
+
+The `when.files` glob selects trigger files. The `then` array is a sequence of actions:
+
+| Action | Description |
+|--------|-------------|
+| `mustHaveCompanion` | Companion file must exist. Use `suffix` (extension swap) or `pair` (`{ from, to }` regex). |
+| `mustNotHaveCompanion` | Companion file must NOT exist. |
+| `mustImport` | File must import `companion: true` or specific `modules: [...]`. |
+| `mustNotImport` | File must not import specific `modules: [...]`. |
+| `companionMustContain` | Companion must match `patterns: [...]` (regex array). |
+| `companionMustNot` | Companion must NOT match `patterns: [...]`. |
+| `fileMustContain` | Trigger file must match `patterns: [...]`. |
+| `fileMustNot` | Trigger file must NOT match `patterns: [...]`. |
+| `companionMaxLines` | Companion file max line count. |
+| `maxLines` | Trigger file max line count. |
+
+Actions are processed sequentially. If `mustHaveCompanion` fails (companion doesn't exist), remaining actions for that file are skipped.
+
+### `file-contract` assertions
+
+The `file-contract` rule also supports an `assertions` field for semantic content checks beyond regex patterns. Assertions and patterns are additive — all must pass.
+
+```json
+{
+  "type": "file-contract",
+  "id": "server-component-contract",
+  "severity": "error",
+  "files": "src/**/*.server.ts",
+  "assertions": {
+    "firstLine": "['\"]use server['\"]",
+    "mustExportDefault": true,
+    "mustNotImport": ["@tauri-apps/*", "react-dom"],
+    "maxLines": 200
+  }
+}
+```
+
+Available assertions:
+
+| Assertion | Type | Description |
+|-----------|------|-------------|
+| `firstLine` | `string` | First non-empty, non-comment line must match this regex. |
+| `mustExportDefault` | `boolean` | File must have `export default`. |
+| `mustExportNamed` | `boolean` | File must have at least one named export. |
+| `mustNotImport` | `string[]` | Module patterns that must not be imported (supports `*` glob). |
+| `mustImport` | `string[]` | Module patterns that must be imported. |
+| `maxLines` | `number` | Maximum line count. |
+| `minLines` | `number` | Minimum line count. |
+| `mustHaveJSDoc` | `boolean` | Exported functions must have JSDoc comments. |
+| `maxExports` | `number` | Maximum number of exports. |
+| `mustBeModule` | `boolean` | File must have at least one `import` or `export`. |
+
+## Presets
+
+Chaperone supports shareable rule bundles via the `extends` field. Presets let you reuse common rule sets across projects.
+
+```json
+{
+  "version": "1.0.0",
+  "extends": ["chaperone/react-layered"],
+  "rules": {
+    "custom": [
+      {
+        "type": "forbidden-import",
+        "id": "tauri-api-boundary",
+        "severity": "error",
+        "files": "src/**/*.{ts,tsx}",
+        "restrictions": [{ "source": "^@tauri-apps/", "allowedIn": ["src/**/*.api.ts"] }]
+      }
+    ]
+  }
+}
+```
+
+### Preset specifiers
+
+- `"chaperone/<name>"` — built-in preset (e.g., `"chaperone/react-layered"`).
+- `"./<path>"` or `"../<path>"` — local JSON file relative to your config.
+
+### Built-in presets
+
+#### `chaperone/react-layered`
+
+Enforces a layered React architecture with Feature-Sliced Design conventions:
+
+- **Import boundaries** between shared → entities → features → widgets → app layers.
+- **Retired paths** for `src/components/`, `src/hooks/`, `src/lib/` (legacy flat structure).
+- **Presentational purity** — `.presentational.tsx` files cannot use `useEffect`, `useState`, `useContext`, or `fetch`.
+- **Pure file purity** — `.pure.ts` files cannot use side effects.
+- **Pure file testing** — `.pure.ts` files must have paired `.pure.test.ts` files.
+- **Public API enforcement** — feature modules must be imported through their `index.ts` barrel file.
+
+### Overriding preset rules
+
+User config rules override preset rules with the same `id`. To disable a preset rule:
+
+```json
+{
+  "extends": ["chaperone/react-layered"],
+  "rules": {
+    "custom": [
+      { "type": "retired-path", "id": "preset/no-legacy-dirs", "severity": "error", "disabled": true, "paths": [] }
+    ]
+  }
+}
+```
+
+### Common fields
+
+All custom rules share these base fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `string` | Yes | Rule type (see sections above). |
+| `id` | `string` | Yes | Unique identifier for this rule. |
+| `severity` | `"error" \| "warning"` | Yes | Severity level. Errors cause non-zero exit code. |
+| `exclude` | `string[]` | No | Glob patterns to exclude from this rule. |
+| `disabled` | `boolean` | No | Set to `true` to disable a preset rule. |
+| `message` | `string` | No | Custom error message (most rule types). |
 
 ## CI Integration
 

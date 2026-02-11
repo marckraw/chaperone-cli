@@ -62,6 +62,7 @@ export interface BaseRule {
   id: string;
   severity: "error" | "warning";
   exclude?: string[]; // Glob patterns to exclude from this rule (e.g., ["**/*.test.ts", "src/generated/**"])
+  disabled?: boolean; // Override a preset rule to disable it
 }
 
 /**
@@ -81,6 +82,58 @@ export interface FileNamingRule extends BaseRule, AIGeneratedMetadata {
   requireCompanion?: {
     transform: string; // e.g., "$1.styles.ts"
   };
+  message?: string;
+}
+
+/**
+ * File pairing rule - map each matched file path to a companion path and enforce existence/non-existence
+ */
+export interface FilePairingRule extends BaseRule, AIGeneratedMetadata {
+  type: "file-pairing";
+  files: string; // Glob for source files
+  pair: {
+    from: string; // Regex pattern applied to relative file path
+    to: string; // Replacement string
+  };
+  mustExist?: boolean; // true = companion must exist, false = companion must NOT exist
+  requireTransformMatch?: boolean; // true = rule errors when pair.from doesn't match a file path
+  message?: string;
+}
+
+/**
+ * File contract assertions - semantic content checks beyond regex
+ */
+export interface FileContractAssertions {
+  firstLine?: string; // First non-empty, non-comment line must match (string or regex)
+  mustExportDefault?: boolean;
+  mustExportNamed?: boolean;
+  mustNotImport?: string[]; // Module patterns that must not be imported (supports * glob)
+  mustImport?: string[]; // Module patterns that must be imported
+  maxLines?: number;
+  minLines?: number;
+  mustHaveJSDoc?: boolean; // Exported functions must have JSDoc
+  maxExports?: number;
+  mustBeModule?: boolean; // Must have at least one import or export
+}
+
+/**
+ * File contract rule - enforce required/forbidden content patterns per file with optional filename capture templating
+ */
+export interface FileContractRule extends BaseRule, AIGeneratedMetadata {
+  type: "file-contract";
+  files: string; // Glob for files to check
+  requiredPatterns?: string[]; // Patterns that must match each file
+  requiredAnyPatterns?: string[]; // At least one pattern must match each file
+  forbiddenPatterns?: string[]; // Patterns that must not match each file
+  captureFromPath?: {
+    pattern: string; // Regex pattern applied to file path or basename
+    group?: number | string; // Capture group index or named group
+    source?: "path" | "basename"; // Defaults to path
+  };
+  templatedRequiredPatterns?: string[]; // Supports {{capture}} placeholder
+  templatedRequiredAnyPatterns?: string[]; // Supports {{capture}} placeholder
+  templatedForbiddenPatterns?: string[]; // Supports {{capture}} placeholder
+  assertions?: FileContractAssertions; // Semantic content checks
   message?: string;
 }
 
@@ -148,15 +201,135 @@ export interface SymbolReferenceRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
+ * Retired path rule - prevent files in deprecated directories
+ */
+export interface RetiredPathRule extends BaseRule, AIGeneratedMetadata {
+  type: "retired-path";
+  paths: Array<{
+    pattern: string; // Glob for retired location
+    reason?: string; // Why retired
+    migratedTo?: string; // Where to put files instead
+  }>;
+  message?: string;
+}
+
+/**
+ * File suffix content rule - content rules by file suffix
+ */
+export interface FileSuffixContentRule extends BaseRule, AIGeneratedMetadata {
+  type: "file-suffix-content";
+  suffix: string; // e.g., ".presentational.tsx"
+  files: string; // Glob scope (e.g., "src/**")
+  forbiddenPatterns?: Array<{ pattern: string; name: string }>;
+  requiredPatterns?: Array<{ pattern: string; name: string }>;
+  message?: string;
+}
+
+/**
+ * File structure rule - enforce feature folder conventions
+ */
+export interface FileStructureRule extends BaseRule, AIGeneratedMetadata {
+  type: "file-structure";
+  parentDirs: string; // Glob for parent dirs (e.g., "src/features/*")
+  required: string[]; // Must exist (e.g., ["ui", "index.ts"])
+  optional?: string[]; // May exist (e.g., ["lib", "model", "api"])
+  strict?: boolean; // If true, unlisted entries = violation
+  message?: string;
+}
+
+/**
+ * Forbidden import rule - restrict imports to specific files
+ */
+export interface ForbiddenImportRule extends BaseRule, AIGeneratedMetadata {
+  type: "forbidden-import";
+  files: string; // Glob for files to scan
+  restrictions: Array<{
+    source: string; // Regex matching import source
+    allowedIn: string[]; // Globs for files where this import IS allowed
+    message?: string;
+  }>;
+  checkPatterns?: Array<{
+    pattern: string; // Regex matching code usage (e.g., "\\binvoke\\(")
+    allowedIn: string[];
+    message?: string;
+  }>;
+  includeTypeImports?: boolean; // default: false (type imports are safe)
+  message?: string;
+}
+
+/**
+ * Import boundary rule - enforce architectural layer boundaries
+ */
+export interface ImportBoundaryRule extends BaseRule, AIGeneratedMetadata {
+  type: "import-boundary";
+  layers: Record<
+    string,
+    {
+      files: string; // Glob for layer files
+      allowImportsFrom: string[]; // Layer names allowed to import from
+    }
+  >;
+  includeTypeImports?: boolean; // default: true
+  includeDynamicImports?: boolean; // default: true
+  message?: string;
+}
+
+/**
+ * Public API rule - enforce barrel file imports
+ */
+export interface PublicApiRule extends BaseRule, AIGeneratedMetadata {
+  type: "public-api";
+  modules: string; // Glob for module roots (e.g., "src/features/*")
+  files: string; // Glob for files to check
+  barrelFile?: string; // Default: "index.ts"
+  allowSameModule?: boolean; // Default: true
+  message?: string;
+}
+
+/**
+ * Relationship rule actions
+ */
+export type RelationshipAction =
+  | { mustHaveCompanion: { suffix?: string; pair?: { from: string; to: string } } }
+  | { mustNotHaveCompanion: { suffix?: string; pair?: { from: string; to: string } } }
+  | { mustImport: { companion?: boolean; modules?: string[] } }
+  | { mustNotImport: { modules: string[] } }
+  | { companionMustContain: { patterns: string[] } }
+  | { companionMustNot: { patterns: string[] } }
+  | { fileMustContain: { patterns: string[] } }
+  | { fileMustNot: { patterns: string[] } }
+  | { companionMaxLines: number }
+  | { maxLines: number };
+
+/**
+ * Relationship rule - composite "if A then B" rules
+ */
+export interface RelationshipRule extends BaseRule, AIGeneratedMetadata {
+  type: "relationship";
+  when: { files: string };
+  then: RelationshipAction[];
+  message?: string;
+}
+
+/**
  * Union of all custom rule types
  */
 export type CustomRule =
   | FileNamingRule
+  | FilePairingRule
+  | FileContractRule
   | RegexRule
   | PackageFieldsRule
   | ComponentLocationRule
   | CommandRule
-  | SymbolReferenceRule;
+  | SymbolReferenceRule
+  | RetiredPathRule
+  | FileSuffixContentRule
+  | FileStructureRule
+  | ForbiddenImportRule
+  | ImportBoundaryRule
+  | PublicApiRule
+  | RelationshipRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead
@@ -220,6 +393,7 @@ export interface ProjectConfig {
  */
 export interface ChaperoneConfig {
   version: string;
+  extends?: string[]; // Preset specifiers (e.g., "chaperone/react-layered", "./local-preset.json")
   project?: ProjectConfig;
   rules?: RulesConfig;
   include?: string[];

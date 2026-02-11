@@ -125,7 +125,7 @@ export function formatAnalyzeResult(result: AnalyzeResult, dryRun: boolean): str
     lines.push("");
     lines.push(dryRun ? "Rules that would be added:" : "Rules Added:");
     for (const rule of result.addedRules) {
-      const typeColor = rule.type === "ai-instructions" ? "\x1b[35m" : "\x1b[34m";
+      const typeColor = rule.source ? "\x1b[35m" : "\x1b[34m";
       lines.push(`  \x1b[32m+\x1b[0m ${typeColor}[${rule.type}]\x1b[0m ${rule.id}`);
       if ("message" in rule && rule.message) {
         lines.push(`    ${rule.message}`);
