@@ -8,6 +8,7 @@ import type { OutputFormat } from "./check/formatters";
 import { copyToClipboard } from "./utils/clipboard";
 import { createSpinner } from "./utils/spinner";
 import { runAnalyze } from "./analyze";
+import { getUpdateNotification, refreshUpdateCache } from "./update-notifier";
 
 const HELP_TEXT = `
 chaperone v${VERSION} - Code enforcer CLI
@@ -244,35 +245,39 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
 
+  // Instant: read cached update check
+  let updateNotice: string | null = null;
+  try {
+    updateNotice = getUpdateNotification();
+  } catch {}
+
+  // Fire-and-forget: refresh cache for next run
+  refreshUpdateCache().catch(() => {});
+
+  let exitCode = 0;
+
   if (!command || command === "help" || command === "--help" || command === "-h") {
     showHelp();
-    process.exit(0);
-  }
-
-  if (command === "version" || command === "--version" || command === "-v") {
+  } else if (command === "version" || command === "--version" || command === "-v") {
     showVersion();
-    process.exit(0);
+  } else if (command === "check") {
+    exitCode = await runCheck(args.slice(1));
+  } else if (command === "init") {
+    await runInit(args.slice(1));
+  } else if (command === "analyze") {
+    exitCode = await runAnalyze(args.slice(1));
+  } else {
+    console.error(`Unknown command: ${command}`);
+    console.error('Run "chaperone help" for usage information');
+    exitCode = 1;
   }
 
-  if (command === "check") {
-    const exitCode = await runCheck(args.slice(1));
-    process.exit(exitCode);
+  // Print update notice last, to stderr
+  if (updateNotice) {
+    console.error(updateNotice);
   }
 
-  if (command === "init") {
-    const initArgs = args.slice(1);
-    await runInit(initArgs);
-    process.exit(0);
-  }
-
-  if (command === "analyze") {
-    const exitCode = await runAnalyze(args.slice(1));
-    process.exit(exitCode);
-  }
-
-  console.error(`Unknown command: ${command}`);
-  console.error('Run "chaperone help" for usage information');
-  process.exit(1);
+  process.exit(exitCode);
 }
 
 main();
