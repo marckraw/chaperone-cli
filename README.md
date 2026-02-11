@@ -28,7 +28,7 @@ Chaperone ships as a single self-contained executable — no runtime, no depende
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') -o chaperone \
+curl -fsSL "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')" -o chaperone \
   && chmod +x chaperone \
   && sudo mv chaperone /usr/local/bin/
 ```
@@ -37,7 +37,7 @@ Or without `sudo` (user-local install):
 
 ```bash
 mkdir -p ~/.local/bin
-curl -fsSL https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') -o ~/.local/bin/chaperone \
+curl -fsSL "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')" -o ~/.local/bin/chaperone \
   && chmod +x ~/.local/bin/chaperone
 ```
 
