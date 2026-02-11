@@ -28,48 +28,28 @@ Chaperone ships as a single self-contained executable — no runtime, no depende
 **macOS / Linux:**
 
 ```bash
-curl -fsSL "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')" -o chaperone \
-  && chmod +x chaperone \
-  && sudo mv chaperone /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone/master/scripts/install.sh | sh
 ```
 
-Or without `sudo` (user-local install):
+With a specific version:
 
 ```bash
-mkdir -p ~/.local/bin
-curl -fsSL "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')" -o ~/.local/bin/chaperone \
-  && chmod +x ~/.local/bin/chaperone
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone/master/scripts/install.sh | CHAPERONE_VERSION=0.3.0 sh
 ```
 
-> Make sure `~/.local/bin` is in your `PATH`. Add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile if needed.
+Custom install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone/master/scripts/install.sh | CHAPERONE_INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+The install script auto-detects your OS and architecture, downloads the correct binary, verifies the SHA256 checksum, and installs it. If `/usr/local/bin` is not writable, it falls back to `~/.local/bin`.
 
 **Windows (PowerShell):**
 
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/marckraw/chaperone/releases/latest/download/chaperone-windows-x64.exe" -OutFile "$env:LOCALAPPDATA\chaperone.exe"
 # Add $env:LOCALAPPDATA to your PATH, or move chaperone.exe somewhere already in PATH
-```
-
-### Using GitHub CLI
-
-If you have [`gh`](https://cli.github.com/) installed:
-
-```bash
-# macOS Apple Silicon
-gh release download --repo marckraw/chaperone --pattern 'chaperone-darwin-arm64' --output chaperone --clobber
-chmod +x chaperone && sudo mv chaperone /usr/local/bin/
-
-# macOS Intel
-gh release download --repo marckraw/chaperone --pattern 'chaperone-darwin-x64' --output chaperone --clobber
-chmod +x chaperone && sudo mv chaperone /usr/local/bin/
-
-# Linux x64
-gh release download --repo marckraw/chaperone --pattern 'chaperone-linux-x64' --output chaperone --clobber
-chmod +x chaperone && sudo mv chaperone /usr/local/bin/
-
-# Linux ARM64
-gh release download --repo marckraw/chaperone --pattern 'chaperone-linux-arm64' --output chaperone --clobber
-chmod +x chaperone && sudo mv chaperone /usr/local/bin/
 ```
 
 ### Manual Download
@@ -95,19 +75,6 @@ chmod +x chaperone && sudo mv chaperone /usr/local/bin/
 
 ```bash
 chaperone --version
-```
-
-Optionally verify the checksum against `SHA256SUMS.txt` from the release:
-
-```bash
-# Download the checksums file
-curl -fsSL https://github.com/marckraw/chaperone/releases/latest/download/SHA256SUMS.txt -o SHA256SUMS.txt
-
-# Verify (macOS)
-shasum -a 256 -c SHA256SUMS.txt --ignore-missing
-
-# Verify (Linux)
-sha256sum -c SHA256SUMS.txt --ignore-missing
 ```
 
 ### From Source
