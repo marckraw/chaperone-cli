@@ -9,6 +9,7 @@ export interface IntegrationsConfig {
 export interface ChaperonePreset {
   name: string;
   description: string;
+  version?: string;
   extends?: string[];
   rules?: {
     typescript?: ToolConfig;
