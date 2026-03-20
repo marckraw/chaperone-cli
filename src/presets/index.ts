@@ -1,6 +1,10 @@
 import type { ChaperonePreset } from "./types";
+import { pureFunctionsPreset } from "./pure-functions";
+import { presentationalComponentsPreset } from "./presentational-components";
+import { packageEssentialsPreset } from "./package-essentials";
+import { layeredArchitecturePreset } from "./layered-architecture";
 import { reactLayeredPreset } from "./react-layered";
-import { reactNativeExpoMrckLabsPreset } from "./react-native-expo-mrck-labs";
+import { reactNativeExpoPreset } from "./react-native-expo";
 
 export type { ChaperonePreset } from "./types";
 
@@ -9,8 +13,15 @@ export type { ChaperonePreset } from "./types";
  * Use "chaperone/<name>" in the config's `extends` array.
  */
 const builtInPresets: Record<string, ChaperonePreset> = {
+  // Foundation presets (composable building blocks)
+  "pure-functions": pureFunctionsPreset,
+  "presentational-components": presentationalComponentsPreset,
+  "package-essentials": packageEssentialsPreset,
+
+  // Architecture presets
+  "layered-architecture": layeredArchitecturePreset,
   "react-layered": reactLayeredPreset,
-  "react-native-expo-mrck-labs": reactNativeExpoMrckLabsPreset,
+  "react-native-expo": reactNativeExpoPreset,
 };
 
 export function getBuiltInPreset(name: string): ChaperonePreset | null {
