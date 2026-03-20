@@ -74,19 +74,8 @@ export interface AIGeneratedMetadata {
 }
 
 /**
- * File naming rule - check for companion files
- */
-export interface FileNamingRule extends BaseRule, AIGeneratedMetadata {
-  type: "file-naming";
-  pattern: string; // Glob for files to check
-  requireCompanion?: {
-    transform: string; // e.g., "$1.styles.ts"
-  };
-  message?: string;
-}
-
-/**
  * File pairing rule - map each matched file path to a companion path and enforce existence/non-existence
+ * Also supports simple $1-style transforms (legacy file-naming syntax)
  */
 export interface FilePairingRule extends BaseRule, AIGeneratedMetadata {
   type: "file-pairing";
@@ -213,29 +202,6 @@ export interface RetiredPathRule extends BaseRule, AIGeneratedMetadata {
   message?: string;
 }
 
-/**
- * File suffix content rule - content rules by file suffix
- */
-export interface FileSuffixContentRule extends BaseRule, AIGeneratedMetadata {
-  type: "file-suffix-content";
-  suffix: string; // e.g., ".presentational.tsx"
-  files: string; // Glob scope (e.g., "src/**")
-  forbiddenPatterns?: Array<{ pattern: string; name: string }>;
-  requiredPatterns?: Array<{ pattern: string; name: string }>;
-  message?: string;
-}
-
-/**
- * File structure rule - enforce feature folder conventions
- */
-export interface FileStructureRule extends BaseRule, AIGeneratedMetadata {
-  type: "file-structure";
-  parentDirs: string; // Glob for parent dirs (e.g., "src/features/*")
-  required: string[]; // Must exist (e.g., ["ui", "index.ts"])
-  optional?: string[]; // May exist (e.g., ["lib", "model", "api"])
-  strict?: boolean; // If true, unlisted entries = violation
-  message?: string;
-}
 
 /**
  * Forbidden import rule - restrict imports to specific files
@@ -286,36 +252,11 @@ export interface PublicApiRule extends BaseRule, AIGeneratedMetadata {
   message?: string;
 }
 
-/**
- * Relationship rule actions
- */
-export type RelationshipAction =
-  | { mustHaveCompanion: { suffix?: string; pair?: { from: string; to: string } } }
-  | { mustNotHaveCompanion: { suffix?: string; pair?: { from: string; to: string } } }
-  | { mustImport: { companion?: boolean; modules?: string[] } }
-  | { mustNotImport: { modules: string[] } }
-  | { companionMustContain: { patterns: string[] } }
-  | { companionMustNot: { patterns: string[] } }
-  | { fileMustContain: { patterns: string[] } }
-  | { fileMustNot: { patterns: string[] } }
-  | { companionMaxLines: number }
-  | { maxLines: number };
-
-/**
- * Relationship rule - composite "if A then B" rules
- */
-export interface RelationshipRule extends BaseRule, AIGeneratedMetadata {
-  type: "relationship";
-  when: { files: string };
-  then: RelationshipAction[];
-  message?: string;
-}
 
 /**
  * Union of all custom rule types
  */
 export type CustomRule =
-  | FileNamingRule
   | FilePairingRule
   | FileContractRule
   | RegexRule
@@ -324,12 +265,9 @@ export type CustomRule =
   | CommandRule
   | SymbolReferenceRule
   | RetiredPathRule
-  | FileSuffixContentRule
-  | FileStructureRule
   | ForbiddenImportRule
   | ImportBoundaryRule
-  | PublicApiRule
-  | RelationshipRule;
+  | PublicApiRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead
