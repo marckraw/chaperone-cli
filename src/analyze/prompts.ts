@@ -44,23 +44,27 @@ Use for patterns that should or should not appear in code.
 Use reportOnce when you care about whether a file matches, not how many times:
 - "Files with JSX should use .tsx extension" → pattern: "(<[A-Z]|<[a-z])", files: "**/*.ts", reportOnce: true
 
-### 2. "file-naming" - File Convention Rules
+### 2. "file-pairing" - File Companion Rules
 
 Use for file naming conventions and required companion files.
 
 **Required fields:**
-- type: "file-naming"
+- type: "file-pairing"
 - id: unique kebab-case identifier
-- pattern: glob pattern for files to check
-- requireCompanion: { transform: "$1.suffix.ext" } (optional)
-- message: error message (optional)
+- files: glob pattern for source files to check
+- pair: { from: "regex pattern on file path", to: "replacement string" }
 - severity: "error" or "warning"
 - source: filename this was extracted from
 - originalText: the verbatim instruction
 
+**Optional fields:**
+- mustExist: true (companion must exist, default) or false (companion must NOT exist)
+- requireTransformMatch: true to error when pair.from doesn't match
+- message: error message
+
 **Examples:**
-- "Every .tsx component needs a .test.tsx file" → pattern: "src/**/*.tsx", requireCompanion: { transform: "$1.test.tsx" }
-- "Every .tsx component needs a .styles.ts file" → pattern: "src/**/*.tsx", requireCompanion: { transform: "$1.styles.ts" }
+- "Every .tsx component needs a .test.tsx file" → files: "src/**/*.tsx", pair: { from: "\\.tsx$", to: ".test.tsx" }
+- "Every .pure.ts file needs a .pure.test.ts file" → files: "src/**/*.pure.ts", pair: { from: "\\.pure\\.ts$", to: ".pure.test.ts" }
 
 ### 3. "package-fields" - Package.json Validation Rules
 
@@ -157,7 +161,7 @@ All rules support these optional fields:
 
 1. **Choose the right rule type:**
    - Use "regex" for content patterns (forbidden/required code)
-   - Use "file-naming" for file structure conventions
+   - Use "file-pairing" for file companion conventions
    - Use "package-fields" for package.json invariants
    - Use "component-location" for presentational/stateful folder boundaries
    - Use "command" for deterministic command checks
@@ -207,14 +211,15 @@ For "Do not use console.log in production code" from CLAUDE.md:
   "originalText": "Do not use console.log in production code"
 }
 
-**Example 2: File-naming rule (companion files)**
+**Example 2: File-pairing rule (companion files)**
 For "Every component should have a test file" from AGENTS.md:
 
 {
-  "type": "file-naming",
+  "type": "file-pairing",
   "id": "require-component-tests",
-  "pattern": "src/components/**/*.tsx",
-  "requireCompanion": { "transform": "$1.test.tsx" },
+  "files": "src/components/**/*.tsx",
+  "pair": { "from": "\\\\.tsx$", "to": ".test.tsx" },
+  "mustExist": true,
   "message": "Component must have a corresponding test file",
   "severity": "error",
   "source": "AGENTS.md",
@@ -281,7 +286,7 @@ ${fileContents}
 Extract all coding conventions, forbidden patterns, required patterns, and file or symbol reference rules that can be checked programmatically.
 
 For each rule:
-- Choose the appropriate type among: "regex", "file-naming", "package-fields", "component-location", "command", "symbol-reference"
+- Choose the appropriate type among: "regex", "file-pairing", "package-fields", "component-location", "command", "symbol-reference"
 - Provide a unique kebab-case ID
 - ALWAYS include "source" (the filename) and "originalText" (the verbatim instruction) for traceability
 

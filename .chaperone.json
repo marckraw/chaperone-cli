@@ -157,16 +157,6 @@
       },
 
       {
-        "id": "module-structure",
-        "type": "file-structure",
-        "severity": "warning",
-        "parentDirs": "src/*",
-        "required": ["index.ts"],
-        "strict": false,
-        "message": "Each top-level module must have an index.ts barrel file"
-      },
-
-      {
         "id": "rule-runner-contract",
         "type": "file-contract",
         "severity": "error",

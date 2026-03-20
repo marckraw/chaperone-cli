@@ -1,6 +1,5 @@
 import type { ChaperoneConfig, CheckResult, CustomRule } from "../types";
 import type { RuleRunnerOptions, RuleResult } from "./types";
-import { runFileNamingRule, isFileNamingRule } from "./file-naming";
 import { runFilePairingRule, isFilePairingRule } from "./file-pairing";
 import { runFileContractRule, isFileContractRule } from "./file-contract";
 import { runRegexRule, isRegexRule } from "./regex";
@@ -9,15 +8,11 @@ import { runComponentLocationRule, isComponentLocationRule } from "./component-l
 import { runCommandRule, isCommandRule } from "./command";
 import { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-reference";
 import { runRetiredPathRule, isRetiredPathRule } from "./retired-path";
-import { runFileSuffixContentRule, isFileSuffixContentRule } from "./file-suffix-content";
-import { runFileStructureRule, isFileStructureRule } from "./file-structure";
 import { runForbiddenImportRule, isForbiddenImportRule } from "./forbidden-import";
 import { runImportBoundaryRule, isImportBoundaryRule } from "./import-boundary";
 import { runPublicApiRule, isPublicApiRule } from "./public-api";
-import { runRelationshipRule, isRelationshipRule } from "./relationship";
 
 export * from "./types";
-export { runFileNamingRule, isFileNamingRule } from "./file-naming";
 export { runFilePairingRule, isFilePairingRule } from "./file-pairing";
 export { runFileContractRule, isFileContractRule } from "./file-contract";
 export { runRegexRule, isRegexRule } from "./regex";
@@ -26,12 +21,9 @@ export { runComponentLocationRule, isComponentLocationRule } from "./component-l
 export { runCommandRule, isCommandRule } from "./command";
 export { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-reference";
 export { runRetiredPathRule, isRetiredPathRule } from "./retired-path";
-export { runFileSuffixContentRule, isFileSuffixContentRule } from "./file-suffix-content";
-export { runFileStructureRule, isFileStructureRule } from "./file-structure";
 export { runForbiddenImportRule, isForbiddenImportRule } from "./forbidden-import";
 export { runImportBoundaryRule, isImportBoundaryRule } from "./import-boundary";
 export { runPublicApiRule, isPublicApiRule } from "./public-api";
-export { runRelationshipRule, isRelationshipRule } from "./relationship";
 export { detectAIInstructionFiles } from "./ai-instructions";
 
 /**
@@ -64,10 +56,7 @@ export async function runAllRules(
     const typeLabel = isAIGenerated ? `${rule.type}*` : rule.type;
     const excludeInfo = rule.exclude?.length ? ` (excluding: ${rule.exclude.join(", ")})` : "";
 
-    if (isFileNamingRule(rule)) {
-      onDebug?.(`  [${typeLabel}] ${rule.id}: checking pattern "${rule.pattern}"${excludeInfo}`);
-      result = await runFileNamingRule(rule, options);
-    } else if (isFilePairingRule(rule)) {
+    if (isFilePairingRule(rule)) {
       onDebug?.(`  [${typeLabel}] ${rule.id}: checking pairing for "${rule.files}"${excludeInfo}`);
       result = await runFilePairingRule(rule, options);
     } else if (isFileContractRule(rule)) {
@@ -94,12 +83,6 @@ export async function runAllRules(
     } else if (isRetiredPathRule(rule)) {
       onDebug?.(`  [${typeLabel}] ${rule.id}: checking retired paths (${rule.paths.length} pattern(s))${excludeInfo}`);
       result = await runRetiredPathRule(rule, options);
-    } else if (isFileSuffixContentRule(rule)) {
-      onDebug?.(`  [${typeLabel}] ${rule.id}: checking content for files with suffix "${rule.suffix}" in "${rule.files}"${excludeInfo}`);
-      result = await runFileSuffixContentRule(rule, options);
-    } else if (isFileStructureRule(rule)) {
-      onDebug?.(`  [${typeLabel}] ${rule.id}: checking structure in "${rule.parentDirs}"${excludeInfo}`);
-      result = await runFileStructureRule(rule, options);
     } else if (isForbiddenImportRule(rule)) {
       onDebug?.(`  [${typeLabel}] ${rule.id}: checking forbidden imports in "${rule.files}"${excludeInfo}`);
       result = await runForbiddenImportRule(rule, options);
@@ -110,9 +93,6 @@ export async function runAllRules(
     } else if (isPublicApiRule(rule)) {
       onDebug?.(`  [${typeLabel}] ${rule.id}: checking public API imports for modules "${rule.modules}"${excludeInfo}`);
       result = await runPublicApiRule(rule, options);
-    } else if (isRelationshipRule(rule)) {
-      onDebug?.(`  [${typeLabel}] ${rule.id}: checking relationships for "${rule.when.files}"${excludeInfo}`);
-      result = await runRelationshipRule(rule, options);
     }
 
     if (result) {
@@ -153,11 +133,7 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
       continue;
     }
 
-    if (isFileNamingRule(rule)) {
-      if (!rule.pattern) {
-        errors.push(`File naming rule '${ruleId}' is missing 'pattern'`);
-      }
-    } else if (isFilePairingRule(rule)) {
+    if (isFilePairingRule(rule)) {
       if (!rule.files) {
         errors.push(`File pairing rule '${ruleId}' is missing 'files'`);
       }
@@ -293,30 +269,6 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
           }
         }
       }
-    } else if (isFileSuffixContentRule(rule)) {
-      if (!rule.suffix) {
-        errors.push(`File suffix content rule '${ruleId}' is missing 'suffix'`);
-      }
-      if (!rule.files) {
-        errors.push(`File suffix content rule '${ruleId}' is missing 'files'`);
-      }
-      if (!rule.forbiddenPatterns?.length && !rule.requiredPatterns?.length) {
-        errors.push(`File suffix content rule '${ruleId}' must define at least one pattern list`);
-      }
-      for (const entry of [...(rule.forbiddenPatterns ?? []), ...(rule.requiredPatterns ?? [])]) {
-        try {
-          new RegExp(entry.pattern);
-        } catch {
-          errors.push(`File suffix content rule '${ruleId}' has invalid regex for "${entry.name}": ${entry.pattern}`);
-        }
-      }
-    } else if (isFileStructureRule(rule)) {
-      if (!rule.parentDirs) {
-        errors.push(`File structure rule '${ruleId}' is missing 'parentDirs'`);
-      }
-      if (!rule.required || rule.required.length === 0) {
-        errors.push(`File structure rule '${ruleId}' is missing 'required'`);
-      }
     } else if (isForbiddenImportRule(rule)) {
       if (!rule.files) {
         errors.push(`Forbidden import rule '${ruleId}' is missing 'files'`);
@@ -383,13 +335,6 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
       }
       if (!rule.files) {
         errors.push(`Public API rule '${ruleId}' is missing 'files'`);
-      }
-    } else if (isRelationshipRule(rule)) {
-      if (!rule.when?.files) {
-        errors.push(`Relationship rule '${ruleId}' is missing 'when.files'`);
-      }
-      if (!rule.then || rule.then.length === 0) {
-        errors.push(`Relationship rule '${ruleId}' is missing 'then' actions`);
       }
     } else {
       errors.push(`Rule '${ruleId}' has unknown type: ${ruleType}`);

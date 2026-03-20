@@ -21,23 +21,6 @@ const baseRuleSchema = z.object({
 }).merge(aiGeneratedMetadataSchema);
 
 /**
- * File naming rule - check for companion files
- */
-export const fileNamingRuleSchema = baseRuleSchema.extend({
-  type: z.literal("file-naming"),
-  pattern: z.string().describe("Glob pattern for files to check, e.g., 'src/**/*.tsx'"),
-  requireCompanion: z
-    .object({
-      transform: z
-        .string()
-        .describe("Transform pattern for companion file, e.g., '$1.styles.ts' or '$1.test.ts'"),
-    })
-    .optional()
-    .describe("Require a companion file for each match"),
-  message: z.string().optional().describe("Custom error message"),
-});
-
-/**
  * File pairing rule - map each file path to a companion path and enforce existence/non-existence
  */
 export const filePairingRuleSchema = baseRuleSchema.extend({
@@ -182,7 +165,6 @@ export const symbolReferenceRuleSchema = baseRuleSchema.extend({
  * Union of all custom rule types
  */
 export const customRuleSchema = z.discriminatedUnion("type", [
-  fileNamingRuleSchema,
   filePairingRuleSchema,
   fileContractRuleSchema,
   regexRuleSchema,
@@ -219,7 +201,6 @@ export const extractionResponseSchema = z.object({
 /**
  * Type exports for use in other modules
  */
-export type FileNamingRule = z.infer<typeof fileNamingRuleSchema>;
 export type FilePairingRule = z.infer<typeof filePairingRuleSchema>;
 export type FileContractRule = z.infer<typeof fileContractRuleSchema>;
 export type RegexRule = z.infer<typeof regexRuleSchema>;

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { ChaperoneConfig, CustomRule, DEFAULT_CONFIG } from "./types";
-import { getBuiltInPreset } from "../presets";
+import { getBuiltInPreset, listBuiltInPresets } from "../presets";
 import type { ChaperonePreset } from "../presets";
 
 const CONFIG_FILENAME = ".chaperone.json";
@@ -33,7 +33,7 @@ function resolveExtends(
       const name = specifier.slice("chaperone/".length);
       preset = getBuiltInPreset(name);
       if (!preset) {
-        throw new Error(`Unknown built-in preset: ${specifier}. Available presets: ${["react-layered"].join(", ")}`);
+        throw new Error(`Unknown built-in preset: ${specifier}. Available presets: ${listBuiltInPresets().join(", ")}`);
       }
     } else if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const presetPath = resolve(configDir, specifier);
@@ -277,12 +277,6 @@ export function validateConfig(config: ChaperoneConfig): string[] {
         errors.push(`Custom rule '${ruleId || i}' is missing 'type'`);
       }
 
-      if (ruleType === "file-naming") {
-        if (!rule.pattern) {
-          errors.push(`File naming rule '${ruleId}' is missing 'pattern'`);
-        }
-      }
-
       if (ruleType === "file-pairing") {
         if (!rule.files) {
           errors.push(`File pairing rule '${ruleId}' is missing 'files'`);
@@ -354,24 +348,6 @@ export function validateConfig(config: ChaperoneConfig): string[] {
         }
       }
 
-      if (ruleType === "file-suffix-content") {
-        if (!rule.suffix) {
-          errors.push(`File suffix content rule '${ruleId}' is missing 'suffix'`);
-        }
-        if (!rule.files) {
-          errors.push(`File suffix content rule '${ruleId}' is missing 'files'`);
-        }
-      }
-
-      if (ruleType === "file-structure") {
-        if (!rule.parentDirs) {
-          errors.push(`File structure rule '${ruleId}' is missing 'parentDirs'`);
-        }
-        if (!rule.required || !Array.isArray(rule.required) || rule.required.length === 0) {
-          errors.push(`File structure rule '${ruleId}' is missing 'required'`);
-        }
-      }
-
       if (ruleType === "forbidden-import") {
         if (!rule.files) {
           errors.push(`Forbidden import rule '${ruleId}' is missing 'files'`);
@@ -393,14 +369,6 @@ export function validateConfig(config: ChaperoneConfig): string[] {
         }
       }
 
-      if (ruleType === "relationship") {
-        if (!rule.when?.files) {
-          errors.push(`Relationship rule '${ruleId}' is missing 'when.files'`);
-        }
-        if (!rule.then || !Array.isArray(rule.then) || rule.then.length === 0) {
-          errors.push(`Relationship rule '${ruleId}' is missing 'then'`);
-        }
-      }
     }
   }
 
