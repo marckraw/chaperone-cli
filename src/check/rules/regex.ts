@@ -54,6 +54,7 @@ export async function runRegexRule(
 
     if (rule.mustMatch) {
       // Pattern MUST be present
+      regex.lastIndex = 0;
       const hasMatch = regex.test(content);
       if (!hasMatch) {
         results.push({
