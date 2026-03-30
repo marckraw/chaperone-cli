@@ -369,6 +369,18 @@ export function validateConfig(config: ChaperoneConfig): string[] {
         }
       }
 
+      if (ruleType === "directive-export-pattern") {
+        if (!rule.files) {
+          errors.push(`Directive export pattern rule '${ruleId}' is missing 'files'`);
+        }
+        if (!rule.directive) {
+          errors.push(`Directive export pattern rule '${ruleId}' is missing 'directive'`);
+        }
+        if (!rule.allowedExportNamePatterns || !Array.isArray(rule.allowedExportNamePatterns) || rule.allowedExportNamePatterns.length === 0) {
+          errors.push(`Directive export pattern rule '${ruleId}' is missing 'allowedExportNamePatterns'`);
+        }
+      }
+
     }
   }
 

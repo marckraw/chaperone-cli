@@ -252,6 +252,17 @@ export interface PublicApiRule extends BaseRule, AIGeneratedMetadata {
   message?: string;
 }
 
+/**
+ * Directive export pattern rule - enforce export naming conventions only when a file starts with a specific directive.
+ */
+export interface DirectiveExportPatternRule extends BaseRule, AIGeneratedMetadata {
+  type: "directive-export-pattern";
+  files: string; // Glob for files to scan
+  directive: string; // e.g. "use client"
+  allowedExportNamePatterns: string[]; // Regex patterns export names must match
+  message?: string;
+}
+
 
 /**
  * Union of all custom rule types
@@ -267,7 +278,8 @@ export type CustomRule =
   | RetiredPathRule
   | ForbiddenImportRule
   | ImportBoundaryRule
-  | PublicApiRule;
+  | PublicApiRule
+  | DirectiveExportPatternRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead
