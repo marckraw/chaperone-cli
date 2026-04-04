@@ -44,6 +44,7 @@ export type {
   RegexRule,
   PackageFieldsRule,
   ComponentLocationRule,
+  ReactComponentCountRule,
   CommandRule,
   SymbolReferenceRule,
   RetiredPathRule,

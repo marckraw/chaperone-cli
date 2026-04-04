@@ -5,6 +5,10 @@ import { runFileContractRule, isFileContractRule } from "./file-contract";
 import { runRegexRule, isRegexRule } from "./regex";
 import { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
 import { runComponentLocationRule, isComponentLocationRule } from "./component-location";
+import {
+  runReactComponentCountRule,
+  isReactComponentCountRule,
+} from "./react-component-count";
 import { runCommandRule, isCommandRule } from "./command";
 import { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-reference";
 import { runRetiredPathRule, isRetiredPathRule } from "./retired-path";
@@ -22,6 +26,10 @@ export { runFileContractRule, isFileContractRule } from "./file-contract";
 export { runRegexRule, isRegexRule } from "./regex";
 export { runPackageFieldsRule, isPackageFieldsRule } from "./package-fields";
 export { runComponentLocationRule, isComponentLocationRule } from "./component-location";
+export {
+  runReactComponentCountRule,
+  isReactComponentCountRule,
+} from "./react-component-count";
 export { runCommandRule, isCommandRule } from "./command";
 export { runSymbolReferenceRule, isSymbolReferenceRule } from "./symbol-reference";
 export { runRetiredPathRule, isRetiredPathRule } from "./retired-path";
@@ -81,6 +89,9 @@ export async function runAllRules(
       const mode = rule.mustBeIn ? "must be in" : "must NOT be in";
       onDebug?.(`  [${typeLabel}] ${rule.id}: ${rule.componentType} components ${mode} "${rule.requiredLocation}"${excludeInfo}`);
       result = await runComponentLocationRule(rule, options);
+    } else if (isReactComponentCountRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: limiting React components to ${rule.maxComponents ?? 1} per file in "${rule.files}"${excludeInfo}`);
+      result = await runReactComponentCountRule(rule, options);
     } else if (isCommandRule(rule)) {
       const commandDisplay = [rule.command, ...(rule.args ?? [])].join(" ").trim();
       onDebug?.(`  [${typeLabel}] ${rule.id}: running command "${commandDisplay}"`);
@@ -234,6 +245,13 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
       }
       if (!rule.requiredLocation) {
         errors.push(`Component location rule '${ruleId}' is missing 'requiredLocation'`);
+      }
+    } else if (isReactComponentCountRule(rule)) {
+      if (!rule.files) {
+        errors.push(`React component count rule '${ruleId}' is missing 'files'`);
+      }
+      if (rule.maxComponents !== undefined && rule.maxComponents < 1) {
+        errors.push(`React component count rule '${ruleId}' must set 'maxComponents' to at least 1`);
       }
     } else if (isCommandRule(rule)) {
       if (!rule.command) {

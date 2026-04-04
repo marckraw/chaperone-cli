@@ -6,6 +6,7 @@ import { layeredArchitecturePreset } from "./layered-architecture";
 import { reactLayeredPreset } from "./react-layered";
 import { reactNativeExpoPreset } from "./react-native-expo";
 import { reactServerComponentsPreset } from "./react-server-components";
+import { singleReactComponentPerFilePreset } from "./single-react-component-per-file";
 
 export type { ChaperonePreset } from "./types";
 
@@ -17,6 +18,7 @@ const builtInPresets: Record<string, ChaperonePreset> = {
   // Foundation presets (composable building blocks)
   "pure-functions": pureFunctionsPreset,
   "presentational-components": presentationalComponentsPreset,
+  "single-react-component-per-file": singleReactComponentPerFilePreset,
   "package-essentials": packageEssentialsPreset,
 
   // Architecture presets
