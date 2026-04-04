@@ -5,6 +5,7 @@ import { packageEssentialsPreset } from "./package-essentials";
 import { layeredArchitecturePreset } from "./layered-architecture";
 import { reactLayeredPreset } from "./react-layered";
 import { reactNativeExpoPreset } from "./react-native-expo";
+import { reactServerComponentsPreset } from "./react-server-components";
 
 export type { ChaperonePreset } from "./types";
 
@@ -22,6 +23,7 @@ const builtInPresets: Record<string, ChaperonePreset> = {
   "layered-architecture": layeredArchitecturePreset,
   "react-layered": reactLayeredPreset,
   "react-native-expo": reactNativeExpoPreset,
+  "react-server-components": reactServerComponentsPreset,
 };
 
 export function getBuiltInPreset(name: string): ChaperonePreset | null {

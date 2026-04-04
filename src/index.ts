@@ -50,6 +50,7 @@ export type {
   ForbiddenImportRule,
   ImportBoundaryRule,
   PublicApiRule,
+  DirectiveExportPatternRule,
   AIGeneratedMetadata,
   AIInstructionFile,
   ToolConfig,

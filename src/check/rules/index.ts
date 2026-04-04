@@ -11,6 +11,10 @@ import { runRetiredPathRule, isRetiredPathRule } from "./retired-path";
 import { runForbiddenImportRule, isForbiddenImportRule } from "./forbidden-import";
 import { runImportBoundaryRule, isImportBoundaryRule } from "./import-boundary";
 import { runPublicApiRule, isPublicApiRule } from "./public-api";
+import {
+  runDirectiveExportPatternRule,
+  isDirectiveExportPatternRule,
+} from "./directive-export-pattern";
 
 export * from "./types";
 export { runFilePairingRule, isFilePairingRule } from "./file-pairing";
@@ -24,6 +28,10 @@ export { runRetiredPathRule, isRetiredPathRule } from "./retired-path";
 export { runForbiddenImportRule, isForbiddenImportRule } from "./forbidden-import";
 export { runImportBoundaryRule, isImportBoundaryRule } from "./import-boundary";
 export { runPublicApiRule, isPublicApiRule } from "./public-api";
+export {
+  runDirectiveExportPatternRule,
+  isDirectiveExportPatternRule,
+} from "./directive-export-pattern";
 export { detectAIInstructionFiles } from "./ai-instructions";
 
 /**
@@ -93,6 +101,9 @@ export async function runAllRules(
     } else if (isPublicApiRule(rule)) {
       onDebug?.(`  [${typeLabel}] ${rule.id}: checking public API imports for modules "${rule.modules}"${excludeInfo}`);
       result = await runPublicApiRule(rule, options);
+    } else if (isDirectiveExportPatternRule(rule)) {
+      onDebug?.(`  [${typeLabel}] ${rule.id}: checking exports in files with "${rule.directive}"${excludeInfo}`);
+      result = await runDirectiveExportPatternRule(rule, options);
     }
 
     if (result) {
@@ -335,6 +346,23 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
       }
       if (!rule.files) {
         errors.push(`Public API rule '${ruleId}' is missing 'files'`);
+      }
+    } else if (isDirectiveExportPatternRule(rule)) {
+      if (!rule.files) {
+        errors.push(`Directive export pattern rule '${ruleId}' is missing 'files'`);
+      }
+      if (!rule.directive) {
+        errors.push(`Directive export pattern rule '${ruleId}' is missing 'directive'`);
+      }
+      if (!rule.allowedExportNamePatterns || rule.allowedExportNamePatterns.length === 0) {
+        errors.push(`Directive export pattern rule '${ruleId}' is missing 'allowedExportNamePatterns'`);
+      }
+      for (const pattern of rule.allowedExportNamePatterns ?? []) {
+        try {
+          new RegExp(pattern);
+        } catch {
+          errors.push(`Directive export pattern rule '${ruleId}' has invalid export name regex: ${pattern}`);
+        }
       }
     } else {
       errors.push(`Rule '${ruleId}' has unknown type: ${ruleType}`);
