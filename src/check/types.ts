@@ -162,6 +162,17 @@ export interface ComponentLocationRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
+ * React component count rule - limit how many React components may live in a file
+ */
+export interface ReactComponentCountRule extends BaseRule, AIGeneratedMetadata {
+  type: "react-component-count";
+  files: string; // Glob for React component files to scan
+  maxComponents?: number; // Default: 1
+  ignoreNames?: string[]; // Component names to ignore
+  message?: string;
+}
+
+/**
  * Command rule - run command-based invariant checks
  */
 export interface CommandRule extends BaseRule, AIGeneratedMetadata {
@@ -273,6 +284,7 @@ export type CustomRule =
   | RegexRule
   | PackageFieldsRule
   | ComponentLocationRule
+  | ReactComponentCountRule
   | CommandRule
   | SymbolReferenceRule
   | RetiredPathRule

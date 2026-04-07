@@ -252,6 +252,25 @@ Use to keep presentational/stateful components in expected folders.
 }
 ```
 
+### `react-component-count`
+
+Use to keep React components split into focused files by capping how many top-level components may exist in a single file.
+
+```json
+{
+  "type": "react-component-count",
+  "id": "single-react-component",
+  "severity": "error",
+  "files": "src/**/*.{tsx,jsx}",
+  "exclude": [
+    "**/*.test.{tsx,jsx}",
+    "**/*.stories.{tsx,jsx}"
+  ],
+  "maxComponents": 1,
+  "message": "Keep a single top-level React component in each file"
+}
+```
+
 ### `command`
 
 Use for deterministic command-based checks.
@@ -556,6 +575,10 @@ Enforces a layered React architecture with Feature-Sliced Design conventions:
 - **Pure file purity** — `.pure.ts` files cannot use side effects.
 - **Pure file testing** — `.pure.ts` files must have paired `.pure.test.ts` files.
 - **Public API enforcement** — feature modules must be imported through their `index.ts` barrel file.
+
+#### `chaperone/single-react-component-per-file`
+
+Enforces one top-level React component per `*.tsx` / `*.jsx` file, excluding test and story files by default.
 
 ### Overriding preset rules
 
