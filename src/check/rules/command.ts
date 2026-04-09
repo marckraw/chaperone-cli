@@ -6,6 +6,7 @@ import type { RuleResult, RuleRunnerOptions } from "./types";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_EXPECTED_EXIT_CODE = 0;
 const RESULT_FILE = ".chaperone.json";
+const MAX_OUTPUT_LENGTH = 4000;
 
 function validatePattern(pattern: string): RegExp | null {
   try {
@@ -13,6 +14,20 @@ function validatePattern(pattern: string): RegExp | null {
   } catch {
     return null;
   }
+}
+
+function formatCommandOutput(stdout: string, stderr: string): string | undefined {
+  const combined = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
+
+  if (!combined) {
+    return undefined;
+  }
+
+  if (combined.length <= MAX_OUTPUT_LENGTH) {
+    return combined;
+  }
+
+  return `${combined.slice(0, MAX_OUTPUT_LENGTH)}\n... output truncated ...`;
 }
 
 /**
@@ -40,8 +55,10 @@ export async function runCommandRule(
   const stdout = processResult.stdout ?? "";
   const stderr = processResult.stderr ?? "";
   const exitCode = processResult.status ?? -1;
+  const commandOutput = formatCommandOutput(stdout, stderr);
+  const hasExecutionFailure = Boolean(processResult.error) && processResult.status === null;
 
-  if (processResult.error) {
+  if (hasExecutionFailure) {
     results.push({
       file: RESULT_FILE,
       rule: `command/${rule.id}`,
@@ -51,6 +68,7 @@ export async function runCommandRule(
       context: {
         command: commandDisplay,
         exitCode,
+        commandOutput,
       },
     });
     return { ruleId: rule.id, results };
@@ -64,12 +82,13 @@ export async function runCommandRule(
         || `Command failed: expected exit code ${expectedExitCode}, got ${exitCode}`,
       severity: rule.severity,
       source: "custom",
-      suggestion: `Fix command checks: ${commandDisplay}`,
+      suggestion: `Run directly for details: ${commandDisplay}`,
       context: {
         command: commandDisplay,
         exitCode,
         expectedValue: String(expectedExitCode),
         actualValue: String(exitCode),
+        commandOutput,
       },
     });
   }
@@ -85,6 +104,7 @@ export async function runCommandRule(
         source: "custom",
         context: {
           command: commandDisplay,
+          commandOutput,
         },
       });
     } else if (!stdoutRegex.test(stdout)) {
@@ -98,6 +118,7 @@ export async function runCommandRule(
           command: commandDisplay,
           expectedValue: `/${rule.stdoutPattern}/`,
           actualValue: stdout.slice(0, 500),
+          commandOutput,
         },
       });
     }
@@ -114,6 +135,7 @@ export async function runCommandRule(
         source: "custom",
         context: {
           command: commandDisplay,
+          commandOutput,
         },
       });
     } else if (!stderrRegex.test(stderr)) {
@@ -127,6 +149,7 @@ export async function runCommandRule(
           command: commandDisplay,
           expectedValue: `/${rule.stderrPattern}/`,
           actualValue: stderr.slice(0, 500),
+          commandOutput,
         },
       });
     }

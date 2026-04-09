@@ -56,6 +56,15 @@ function formatResultForAI(result: CheckResult): string {
     lines.push(`  Suggestion: ${result.suggestion}`);
   }
 
+  if (result.context?.commandOutput) {
+    lines.push("  Command output:");
+    lines.push("  ```");
+    for (const outputLine of result.context.commandOutput.split("\n")) {
+      lines.push(`  ${outputLine}`);
+    }
+    lines.push("  ```");
+  }
+
   return lines.join("\n");
 }
 

@@ -55,6 +55,12 @@ function formatResult(result: CheckResult): string {
     if (ctx.actualValue) {
       lines.push(`    ${colors.dim}Actual: ${colors.reset}${ctx.actualValue}`);
     }
+    if (ctx.commandOutput) {
+      lines.push(`    ${colors.dim}Command output:${colors.reset}`);
+      for (const outputLine of ctx.commandOutput.split("\n")) {
+        lines.push(`      ${colors.dim}${outputLine}${colors.reset}`);
+      }
+    }
 
     // Show component type and detected patterns
     if (ctx.componentType) {
