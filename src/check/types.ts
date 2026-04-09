@@ -22,6 +22,7 @@ export interface CheckResult {
     symbol?: string; // For symbol-reference: symbol that should be referenced
     command?: string; // For command: executed command
     exitCode?: number; // For command: actual exit code
+    commandOutput?: string; // For command: stderr/stdout details
     detectedPatterns?: string[]; // What patterns were detected (e.g., hooks found)
   };
 }
@@ -194,6 +195,10 @@ export interface SymbolReferenceRule extends BaseRule, AIGeneratedMetadata {
   type: "symbol-reference";
   sourceFiles: string; // Glob for source files that define exported symbols
   targetFiles: string; // Glob for files where symbols must be referenced
+  targetPair?: {
+    from: string; // Regex pattern applied to source file path
+    to: string; // Replacement string to resolve the paired target file
+  };
   symbolKinds?: Array<"function-declaration" | "function-variable">;
   symbolPattern?: string; // Optional regex to filter symbol names
   ignoreSymbols?: string[]; // Symbols to ignore

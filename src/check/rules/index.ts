@@ -287,6 +287,13 @@ export function validateCustomRules(rules: CustomRule[]): string[] {
           errors.push(`Symbol reference rule '${ruleId}' has invalid symbolPattern: ${rule.symbolPattern}`);
         }
       }
+      if (rule.targetPair?.from) {
+        try {
+          new RegExp(rule.targetPair.from);
+        } catch {
+          errors.push(`Symbol reference rule '${ruleId}' has invalid targetPair.from regex: ${rule.targetPair.from}`);
+        }
+      }
     } else if (isRetiredPathRule(rule)) {
       if (!rule.paths || rule.paths.length === 0) {
         errors.push(`Retired path rule '${ruleId}' is missing 'paths'`);

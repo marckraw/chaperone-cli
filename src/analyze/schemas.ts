@@ -149,6 +149,13 @@ export const symbolReferenceRuleSchema = baseRuleSchema.extend({
   type: z.literal("symbol-reference"),
   sourceFiles: z.string().describe("Glob pattern for source files with exported symbols"),
   targetFiles: z.string().describe("Glob pattern for files where symbols must be referenced"),
+  targetPair: z
+    .object({
+      from: z.string().describe("Regex pattern applied to the source file path"),
+      to: z.string().describe("Replacement string used to resolve the paired target file")
+    })
+    .optional()
+    .describe("Optional source-to-target file mapping for sibling or paired reference checks"),
   symbolKinds: z
     .array(z.enum(["function-declaration", "function-variable"]))
     .optional()

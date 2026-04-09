@@ -9,8 +9,15 @@ interface ExportedSymbol {
   line: number;
 }
 
+interface TargetReferenceScope {
+  files: string[];
+  content: string;
+  expectedLabel: string;
+}
+
 const FUNCTION_DECLARATION_REGEX = /^\s*export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm;
-const FUNCTION_VARIABLE_ARROW_REGEX = /^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/gm;
+const FUNCTION_VARIABLE_ARROW_REGEX =
+  /^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)(?:\s*:\s*[^=]+?)?\s*=>/gm;
 const FUNCTION_VARIABLE_EXPRESSION_REGEX = /^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?function\b/gm;
 
 function getLineNumber(content: string, index: number): number {
@@ -76,6 +83,34 @@ function isValidRegex(pattern: string): boolean {
   }
 }
 
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveTargetScope(params: {
+  sourceFile: string;
+  targetFiles: string[];
+  targetContentByFile: Map<string, string>;
+  rule: SymbolReferenceRule;
+}): TargetReferenceScope {
+  if (!params.rule.targetPair) {
+    return {
+      files: params.targetFiles,
+      content: params.targetFiles.map((filePath) => params.targetContentByFile.get(filePath) ?? "").join("\n"),
+      expectedLabel: params.rule.targetFiles,
+    };
+  }
+
+  const pairRegex = new RegExp(params.rule.targetPair.from);
+  const pairedTargetFile = params.sourceFile.replace(pairRegex, params.rule.targetPair.to);
+
+  return {
+    files: [pairedTargetFile],
+    content: params.targetContentByFile.get(pairedTargetFile) ?? "",
+    expectedLabel: pairedTargetFile,
+  };
+}
+
 /**
  * Run symbol-reference rule to ensure exported symbols are referenced in target files.
  */
@@ -90,15 +125,14 @@ export async function runSymbolReferenceRule(
   const sourceFiles = globSync(rule.sourceFiles, { cwd, ignore: allExcludes });
   const targetFiles = globSync(rule.targetFiles, { cwd, ignore: allExcludes });
 
-  const targetContents = targetFiles
-    .map((filePath) => {
-      try {
-        return readFileSync(join(cwd, filePath), "utf-8");
-      } catch {
-        return "";
-      }
-    })
-    .join("\n");
+  const targetContentByFile = new Map<string, string>();
+  for (const filePath of targetFiles) {
+    try {
+      targetContentByFile.set(filePath, readFileSync(join(cwd, filePath), "utf-8"));
+    } catch {
+      targetContentByFile.set(filePath, "");
+    }
+  }
 
   const kinds = rule.symbolKinds ?? ["function-declaration", "function-variable"];
   const ignoreSet = new Set(rule.ignoreSymbols ?? []);
@@ -126,6 +160,12 @@ export async function runSymbolReferenceRule(
     }
 
     const exportedSymbols = extractExportedSymbols(content, kinds);
+    const targetScope = resolveTargetScope({
+      sourceFile,
+      targetFiles,
+      targetContentByFile,
+      rule,
+    });
 
     for (const symbol of exportedSymbols) {
       if (ignoreSet.has(symbol.name)) {
@@ -135,10 +175,12 @@ export async function runSymbolReferenceRule(
         continue;
       }
 
-      const symbolRegex = new RegExp(`\\b${symbol.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
-      if (symbolRegex.test(targetContents)) {
+      const symbolRegex = new RegExp(`\\b${escapeRegex(symbol.name)}\\b`);
+      if (symbolRegex.test(targetScope.content)) {
         continue;
       }
+
+      const targetExists = targetScope.files.every((filePath) => targetContentByFile.has(filePath));
 
       results.push({
         file: sourceFile,
@@ -150,8 +192,8 @@ export async function runSymbolReferenceRule(
         suggestion: `Add unit tests that reference "${symbol.name}"`,
         context: {
           symbol: symbol.name,
-          expectedValue: `Referenced in ${rule.targetFiles}`,
-          actualValue: "No reference found",
+          expectedValue: `Referenced in ${targetScope.expectedLabel}`,
+          actualValue: targetExists ? "No reference found" : "Target file not found",
         },
       });
     }

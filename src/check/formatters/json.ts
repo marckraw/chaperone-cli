@@ -21,6 +21,7 @@ export interface JsonOutput {
     source?: string;
     fixable?: boolean;
     suggestion?: string;
+    context?: Record<string, unknown>;
   }>;
   bySource: Record<
     string,
@@ -31,6 +32,7 @@ export interface JsonOutput {
       line?: number;
       column?: number;
       severity: "error" | "warning";
+      context?: Record<string, unknown>;
     }>
   >;
 }
@@ -57,6 +59,7 @@ export function formatJson(summary: CheckSummary, noWarnings = false): string {
       source: r.source,
       fixable: r.fixable,
       suggestion: r.suggestion,
+      context: r.context,
     })),
     bySource: {},
   };
@@ -74,6 +77,7 @@ export function formatJson(summary: CheckSummary, noWarnings = false): string {
       line: result.line,
       column: result.column,
       severity: result.severity,
+      context: result.context,
     });
   }
 
