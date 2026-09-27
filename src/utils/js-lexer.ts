@@ -510,6 +510,43 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   return tokens;
 }
 
+const OPENERS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
+
+export interface BracketStructure {
+  /** For each bracket token, the index of its partner (or -1) */
+  partner: Int32Array;
+  /** Bracket nesting depth before each token (0 = top level) */
+  depth: Int32Array;
+}
+
+/**
+ * Pair up (), [] and {} tokens and record the nesting depth of every token.
+ */
+export function analyzeBrackets(tokens: readonly Token[]): BracketStructure {
+  const partner = new Int32Array(tokens.length).fill(-1);
+  const depth = new Int32Array(tokens.length);
+  const stack: number[] = [];
+
+  tokens.forEach((token, index) => {
+    depth[index] = stack.length;
+    if (token.type !== "punct") return;
+    if (OPENERS[token.value]) {
+      stack.push(index);
+      return;
+    }
+    if (token.value === ")" || token.value === "]" || token.value === "}") {
+      const top = stack[stack.length - 1];
+      if (top !== undefined && OPENERS[tokens[top]!.value] === token.value) {
+        stack.pop();
+        partner[top] = index;
+        partner[index] = top;
+      }
+    }
+  });
+
+  return { partner, depth };
+}
+
 /**
  * Whether JSX should be recognised for a file path (not for .ts/.mts/.cts, where
  * `<Type>value` is a type assertion).

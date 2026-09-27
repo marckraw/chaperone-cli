@@ -1,3 +1,4 @@
+import { compileGlob, hasGlobSyntax, normalizeGlob } from "../../utils/glob";
 import type { CheckResult, ComponentLocationRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { getRuleContext } from "./utils/rule-context";
@@ -71,11 +72,11 @@ function analyzeComponent(content: string): ComponentAnalysis {
     "useNavigate", "useParams", "useLocation",
   ];
 
-  for (let i = 0; i < STATEFUL_PATTERNS.length; i++) {
-    if (STATEFUL_PATTERNS[i].test(content)) {
-      detectedPatterns.push(patternNames[i] || `pattern-${i}`);
+  STATEFUL_PATTERNS.forEach((pattern, index) => {
+    if (pattern.test(content)) {
+      detectedPatterns.push(patternNames[index] ?? `pattern-${index}`);
     }
-  }
+  });
 
   const isStateful = detectedPatterns.length > 0;
 
@@ -191,23 +192,32 @@ export async function runComponentLocationRule(
 }
 
 /**
- * Check if a file path matches a location pattern (glob-like)
+ * Check if a file lives in a location:
+ * - "src/components/ui/" or "src/components/ui": the file is inside that directory;
+ * - a glob ("src/components/ui/**", "src/features/*\/ui"): the glob matches the file
+ *   or one of its parent directories.
  */
-function matchesLocationPattern(filePath: string, locationPattern: string): boolean {
-  // Simple prefix matching for now
-  // e.g., "src/components/ui/" matches "src/components/ui/Button.tsx"
-  if (locationPattern.endsWith("/")) {
-    return filePath.startsWith(locationPattern);
+export function matchesLocationPattern(filePath: string, locationPattern: string): boolean {
+  const location = normalizeGlob(locationPattern).replace(/\/+$/, "");
+  if (location === "") {
+    return true;
   }
 
-  // Glob pattern matching
-  const regexPattern = locationPattern
-    .replace(/\*\*/g, ".*")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\//g, "\\/");
+  if (!hasGlobSyntax(location)) {
+    return filePath === location || filePath.startsWith(`${location}/`);
+  }
 
-  const regex = new RegExp(`^${regexPattern}`);
-  return regex.test(filePath);
+  const matcher = compileGlob(location);
+  if (matcher(filePath)) {
+    return true;
+  }
+  const segments = filePath.split("/");
+  for (let length = segments.length - 1; length > 0; length--) {
+    if (matcher(segments.slice(0, length).join("/"))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
