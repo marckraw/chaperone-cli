@@ -199,7 +199,8 @@ Exclude patterns (global `exclude` and each rule's `exclude`) follow `.gitignore
 - A pattern without a slash matches a file or directory name at any depth: `dist` matches `dist/` and `packages/x/dist/`, but not `distribution/`.
 - A pattern with a slash, or a leading `/`, is anchored to the project root: `src/generated`, `/build`.
 - Excluding a directory excludes everything below it; `src/generated`, `src/generated/` and `src/generated/**` are equivalent.
-- Patterns are applied in order and the last match wins; `!pattern` re-includes something an earlier pattern (including a default) excluded, e.g. `"exclude": ["!src/build"]`.
+- For each file or directory the last matching pattern wins, so `!pattern` re-includes something an earlier pattern (including a default) excluded, e.g. `"exclude": ["build", "!src/build"]`. As in `.gitignore`, nothing below an excluded directory can be re-included: re-include the directory itself.
+- Directories and files that cannot be read (for example because of permissions) are listed in the report as not checked, and `check --cwd` with a missing directory exits 2.
 
 ### Globs
 

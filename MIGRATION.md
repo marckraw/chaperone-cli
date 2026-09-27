@@ -88,7 +88,7 @@ If a rule relied on `^` meaning "start of file" (typically a `mustMatch: true` h
 - `node_modules` and `.git` (any depth) plus `/dist` and `/build` (project root) are always excluded. Your `exclude` no longer replaces them, so `"exclude": ["data"]` no longer makes Chaperone walk `node_modules`.
 - A slash-less pattern matches that name **at any depth**: `"exclude": ["dist"]` now also excludes `packages/x/dist`, and no longer excludes `distribution/` (a prefix match before). Anchor it with a slash to mean only the root: `"/dist"`.
 - `**/x` patterns now match at the root too: `"exclude": ["**/*.md"]` now excludes `AGENTS.md`. Globs with braces now work in `exclude` and `allowedIn`: `"**/*.test.{ts,tsx}"` used to match nothing.
-- To check something a default excludes, re-include it with `!`: `"exclude": ["!src/build"]`.
+- To check something an exclude covers, re-include the directory itself with `!`: `"exclude": ["build", "!src/build"]`. As in `.gitignore`, files below an excluded directory cannot be re-included one by one.
 
 Some rules may now see fewer files (things you excluded now really are excluded) or more files (brace globs in `files` that used to fail now match).
 

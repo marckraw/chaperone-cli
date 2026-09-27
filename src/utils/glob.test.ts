@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
+import { chmodSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../testing/fixtures";
 import {
   checkGlobSyntax,
@@ -204,5 +205,40 @@ describe("globSync", () => {
   test("honours ignore patterns", () => {
     const root = makeProject({ "src/a.ts": "", "src/gen/b.ts": "" });
     expect(globSync("src/**/*.ts", { cwd: root, ignore: ["src/gen"] })).toEqual(["src/a.ts"]);
+  });
+});
+
+describe("excludes follow .gitignore: nothing below an excluded directory comes back", () => {
+  test("an unanchored negation does not re-open node_modules", () => {
+    const root = makeProject({
+      "src/a.generated.ts": "",
+      "node_modules/pkg/b.generated.ts": "",
+    });
+    const visited: string[] = [];
+    const files = walkFiles(root, {
+      exclude: ["node_modules", "*.generated.ts", "!src/*.generated.ts"],
+      readDirectory: (path) => {
+        visited.push(path);
+        return readdirSync(path, { withFileTypes: true });
+      },
+    });
+    expect(files).toEqual(["src/a.generated.ts"]);
+    expect(visited.some((path) => path.includes("node_modules"))).toBe(false);
+    expect(compileExcludes(["node_modules", "!*.generated.ts"]).excludes("node_modules/pkg/b.generated.ts")).toBe(true);
+  });
+
+  test("reports directories that cannot be read", () => {
+    const root = makeProject({ "open/a.ts": "", "locked/b.ts": "" });
+    chmodSync(join(root, "locked"), 0o000);
+    try {
+      const unreadable: string[] = [];
+      const files = walkFiles(root, { onUnreadable: (path) => unreadable.push(path) });
+      expect(files).toEqual(["open/a.ts"]);
+      if (process.getuid?.() !== 0) {
+        expect(unreadable).toEqual(["locked"]);
+      }
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+    }
   });
 });

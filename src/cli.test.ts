@@ -194,3 +194,11 @@ describe("chaperone check --since", () => {
     expect(run.stderr).toContain('unknown git ref "no-such-ref"');
   });
 });
+
+describe("chaperone check --cwd", () => {
+  test("exits 2 when the directory does not exist", () => {
+    const run = runCli(["check", "--cwd", "/definitely/not/here", "--format", "json"], makeProject());
+    expect(run.exitCode).toBe(2);
+    expect(JSON.parse(run.stdout).message).toContain("directory not found");
+  });
+});

@@ -55,6 +55,8 @@ export interface JsonOutput {
   disabledRules: Array<{ id: string; source: string }>;
   /** Present when custom rules were limited to files changed since a git ref */
   since?: { ref: string; changedFiles: number };
+  /** Paths that could not be read, so were not checked */
+  unreadable: string[];
 }
 
 /**
@@ -93,6 +95,7 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
     rules: summary.rules ?? [],
     disabledRules: summary.disabledRules ?? [],
     since: summary.since,
+    unreadable: summary.unreadable ?? [],
   };
 
   // Group by source

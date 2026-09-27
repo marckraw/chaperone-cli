@@ -25,6 +25,8 @@ export interface FileIndex {
   glob(pattern: string, exclude?: readonly string[]): string[];
   /** Read a file relative to the root (cached). Returns null when it cannot be read. */
   read(path: string): string | null;
+  /** Directories the walk could not read and files that could not be read, so far */
+  unreadable(): string[];
 }
 
 export interface FileIndexOptions {
@@ -34,9 +36,13 @@ export interface FileIndexOptions {
 }
 
 export function createFileIndex(root: string, options: FileIndexOptions = {}): FileIndex {
+  const unreadable = new Set<string>();
   const files = options.files
     ? [...options.files].sort()
-    : walkFiles(root, { exclude: options.exclude ?? [] });
+    : walkFiles(root, {
+        exclude: options.exclude ?? [],
+        onUnreadable: (path) => unreadable.add(path === "" ? "." : `${path}/`),
+      });
   const fileSet = new Set(files);
   const contentCache = new Map<string, string | null>();
   const globCache = new Map<string, string[]>();
@@ -79,6 +85,7 @@ export function createFileIndex(root: string, options: FileIndexOptions = {}): F
   return {
     root,
     files,
+    unreadable: () => [...unreadable].sort(),
     has: (path) => fileSet.has(normalizeGlob(path)),
     hasDirectory: (path) => getDirectories().has(normalizeGlob(path).replace(/\/$/, "")),
     childDirectories: (directory) => {
@@ -113,6 +120,8 @@ export function createFileIndex(root: string, options: FileIndexOptions = {}): F
         content = readFileSync(join(root, normalized), "utf-8");
       } catch {
         content = null;
+        // An indexed file that cannot be read is a gap in the check, not a pass
+        if (fileSet.has(normalized)) unreadable.add(normalized);
       }
       contentCache.set(normalized, content);
       return content;

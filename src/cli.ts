@@ -257,7 +257,7 @@ async function runCheck(args: string[]): Promise<number> {
     if (error instanceof ConfigError) {
       return printConfigError(error, format);
     }
-    if (error instanceof GitError) {
+    if (error instanceof GitError || error instanceof UsageError) {
       console.error(`Error: ${error.message}`);
       if (format === "json") {
         console.log(JSON.stringify({ success: false, error: "usage", exitCode: EXIT.ERROR, message: error.message }, null, 2));

@@ -86,6 +86,10 @@ export function describeGaps(summary: CheckSummary): string[] {
         .join(", ")})`
     );
   }
+  const unreadable = summary.unreadable ?? [];
+  if (unreadable.length > 0) {
+    gaps.push(`${unreadable.length} path(s) could not be read (${unreadable.slice(0, 3).join(", ")}${unreadable.length > 3 ? ", …" : ""})`);
+  }
   if (summary.since) {
     gaps.push(
       `custom rules only checked the ${summary.since.changedFiles} file(s) changed since ${summary.since.ref}`
@@ -126,6 +130,9 @@ export function describeSkipped(summary: CheckSummary): string[] {
   }
   for (const disabled of summary.disabledRules ?? []) {
     lines.push(`Rule "${disabled.id}" is disabled (${disabled.source})`);
+  }
+  for (const path of summary.unreadable ?? []) {
+    lines.push(`Could not read ${path}`);
   }
   return lines;
 }

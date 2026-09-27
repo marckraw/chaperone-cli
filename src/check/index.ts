@@ -1,4 +1,6 @@
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
+import { UsageError } from "../utils/args";
 import { loadConfigWithDiagnostics, getEffectivePatterns } from "./config-loader";
 import { runAllTools } from "./runners";
 import { runAllRules, summarizeRules } from "./rules";
@@ -43,6 +45,9 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   const startTime = Date.now();
   const { configPath, fix, include, exclude, since, onProgress, onDebug } = options;
   const cwd = resolve(options.cwd);
+  if (!isDirectory(cwd)) {
+    throw new UsageError(`directory not found: ${cwd}`);
+  }
 
   // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
@@ -119,6 +124,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     rules: summarizeRules(customRules, ruleResults.byRule),
     disabledRules,
     since: since && changedFiles ? { ref: since, changedFiles: changedFiles.size } : undefined,
+    unreadable: context.index.unreadable(),
   };
 
   return summary;
@@ -156,6 +162,14 @@ function countFilesToCheck(index: FileIndex, include: string[], changedFiles?: R
   }
 
   return allFiles.size;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**

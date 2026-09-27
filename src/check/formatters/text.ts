@@ -153,6 +153,15 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
     lines.push("");
   }
 
+  const unreadable = summary.unreadable ?? [];
+  if (unreadable.length > 0) {
+    lines.push(`${colors.bold}Could not read (not checked):${colors.reset}`);
+    for (const path of unreadable) {
+      lines.push(`  ${colors.yellow}!${colors.reset} ${path}`);
+    }
+    lines.push("");
+  }
+
   // Configuration warnings
   const configWarnings = (summary.diagnostics ?? []).filter((diagnostic) => diagnostic.level === "warning");
   if (configWarnings.length > 0) {

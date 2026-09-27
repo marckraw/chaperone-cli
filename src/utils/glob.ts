@@ -135,7 +135,6 @@ export interface CompiledExcludePattern {
   match: PathMatcher;
   /** For anchored patterns ending in "/**": matches the directory itself so it can be pruned. */
   matchDirectory: PathMatcher | null;
-  prefix: string;
 }
 
 export interface ExcludeMatcher {
@@ -145,14 +144,15 @@ export interface ExcludeMatcher {
 }
 
 /**
- * Compile exclude patterns with .gitignore-like semantics:
+ * Compile exclude patterns with .gitignore semantics:
  *
  * - A pattern without a slash (e.g. `dist`, `*.log`) matches a file or directory name at any depth.
  * - A pattern with a slash (e.g. `src/generated`, `apps/*\/out`) is anchored to the project root.
  *   A leading `/` anchors a slash-less pattern (`/dist` only matches the top-level `dist`).
- * - Matching a directory excludes everything below it; a trailing `/` or `/**` is optional.
- * - Patterns are evaluated in order and the last match wins; `!pattern` re-includes paths an
- *   earlier pattern excluded.
+ * - An excluded directory excludes everything below it; a trailing `/` or `/**` is optional.
+ * - For each file or directory the last matching pattern wins, so `!pattern` re-includes what an
+ *   earlier pattern excluded. As in .gitignore, nothing below an excluded directory can be
+ *   re-included: re-include the directory itself (`!src/build`) instead.
  */
 export function compileExcludes(patterns: readonly string[]): ExcludeMatcher & {
   /** Internal: used by the walker */
@@ -195,14 +195,7 @@ export function compileExcludes(patterns: readonly string[]): ExcludeMatcher & {
       matchDirectory = directoryPattern === "" ? null : compileGlob(directoryPattern);
     }
 
-    compiled.push({
-      source: raw,
-      negated,
-      anchored,
-      match: compileGlob(pattern),
-      matchDirectory,
-      prefix: anchored ? staticPrefix(pattern) : "",
-    });
+    compiled.push({ source: raw, negated, anchored, match: compileGlob(pattern), matchDirectory });
   }
 
   const excludes = (path: string): boolean => {
@@ -211,42 +204,18 @@ export function compileExcludes(patterns: readonly string[]): ExcludeMatcher & {
       return false;
     }
     const segments = normalized.split("/");
-    let state = false;
-
-    for (const pattern of compiled) {
-      if (patternMatchesPathOrAncestor(pattern, normalized, segments)) {
-        state = !pattern.negated;
+    let prefix = "";
+    for (let index = 0; index < segments.length; index++) {
+      const name = segments[index]!;
+      prefix = index === 0 ? name : `${prefix}/${name}`;
+      if (isExcludedEntry(compiled, prefix, name, index < segments.length - 1)) {
+        return true;
       }
     }
-
-    return state;
+    return false;
   };
 
   return { patterns: [...patterns], compiled, excludes };
-}
-
-function patternMatchesPathOrAncestor(
-  pattern: CompiledExcludePattern,
-  path: string,
-  segments: string[]
-): boolean {
-  if (!pattern.anchored) {
-    return segments.some((segment) => pattern.match(segment));
-  }
-
-  if (pattern.match(path)) {
-    return true;
-  }
-
-  let ancestor = "";
-  for (let index = 0; index < segments.length - 1; index++) {
-    ancestor = index === 0 ? segments[0]! : `${ancestor}/${segments[index]}`;
-    if (pattern.match(ancestor) || pattern.matchDirectory?.(ancestor)) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function patternMatchesEntry(
@@ -265,20 +234,22 @@ function patternMatchesEntry(
 }
 
 /**
- * Whether a negated pattern could re-include something below `directory`
- * (in which case the walker must not prune it).
+ * Whether one entry is excluded by the patterns that match it (the last match wins).
+ * Ancestors are checked separately: an excluded directory excludes everything below it.
  */
-function mayReinclude(patterns: readonly CompiledExcludePattern[], directory: string): boolean {
-  return patterns.some((pattern) => {
-    if (!pattern.negated) {
-      return false;
+function isExcludedEntry(
+  patterns: readonly CompiledExcludePattern[],
+  relativePath: string,
+  name: string,
+  isDirectory: boolean
+): boolean {
+  let excluded = false;
+  for (const pattern of patterns) {
+    if (patternMatchesEntry(pattern, relativePath, name, isDirectory)) {
+      excluded = !pattern.negated;
     }
-    if (!pattern.anchored || pattern.prefix === "") {
-      return true;
-    }
-    const prefix = pattern.prefix.replace(/\/$/, "");
-    return prefix === directory || prefix.startsWith(`${directory}/`) || directory.startsWith(`${prefix}/`);
-  });
+  }
+  return excluded;
 }
 
 export interface WalkOptions {
@@ -288,6 +259,8 @@ export interface WalkOptions {
   base?: string;
   /** Directory reader, injectable for tests */
   readDirectory?: (absolutePath: string) => Dirent[];
+  /** Called for every directory that exists but cannot be read (e.g. permission denied) */
+  onUnreadable?: (relativePath: string, error: unknown) => void;
 }
 
 const defaultReadDirectory = (absolutePath: string): Dirent[] =>
@@ -300,32 +273,29 @@ const defaultReadDirectory = (absolutePath: string): Dirent[] =>
  * Symlinked files are included; symlinked directories are not followed.
  */
 export function walkFiles(root: string, options: WalkOptions = {}): string[] {
-  const { exclude = [], base = "", readDirectory = defaultReadDirectory } = options;
-  const { compiled } = compileExcludes(exclude);
+  const { exclude = [], base = "", readDirectory = defaultReadDirectory, onUnreadable } = options;
+  const matcher = compileExcludes(exclude);
+  const { compiled } = matcher;
   const files: string[] = [];
-  const hasNegation = compiled.some((pattern) => pattern.negated);
 
-  type Frame = { absolute: string; relative: string; matched: boolean[] };
-  const initial: boolean[] = compiled.map(() => false);
-  const stack: Frame[] = [{ absolute: base ? join(root, base) : root, relative: base, matched: initial }];
-
-  if (base) {
-    // Apply excludes to the ancestors of the starting directory.
-    const segments = base.split("/");
-    stack[0]!.matched = compiled.map((pattern) =>
-      patternMatchesPathOrAncestor(pattern, base, segments)
-    );
-    if (decide(compiled, stack[0]!.matched) && !mayReinclude(compiled, base)) {
-      return [];
-    }
+  if (base && matcher.excludes(base)) {
+    return [];
   }
+
+  const stack: Array<{ absolute: string; relative: string }> = [
+    { absolute: base ? join(root, base) : root, relative: base },
+  ];
 
   while (stack.length > 0) {
     const frame = stack.pop()!;
     let entries: Dirent[];
     try {
       entries = readDirectory(frame.absolute);
-    } catch {
+    } catch (error) {
+      // A missing base directory simply has no files; anything else is reported
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT" || frame.relative !== base) {
+        onUnreadable?.(frame.relative, error);
+      }
       continue;
     }
 
@@ -347,34 +317,19 @@ export function walkFiles(root: string, options: WalkOptions = {}): string[] {
       if (!isDirectory && !isFile) {
         continue;
       }
-
-      const matched = frame.matched.map(
-        (already, index) =>
-          already || patternMatchesEntry(compiled[index]!, relativePath, name, isDirectory)
-      );
-      const excluded = decide(compiled, matched);
+      if (isExcludedEntry(compiled, relativePath, name, isDirectory)) {
+        continue;
+      }
 
       if (isDirectory) {
-        if (excluded && !(hasNegation && mayReinclude(compiled, relativePath))) {
-          continue;
-        }
-        stack.push({ absolute: join(frame.absolute, name), relative: relativePath, matched });
-      } else if (!excluded) {
+        stack.push({ absolute: join(frame.absolute, name), relative: relativePath });
+      } else {
         files.push(relativePath);
       }
     }
   }
 
   return files.sort();
-}
-
-function decide(patterns: readonly CompiledExcludePattern[], matched: readonly boolean[]): boolean {
-  for (let index = patterns.length - 1; index >= 0; index--) {
-    if (matched[index]) {
-      return !patterns[index]!.negated;
-    }
-  }
-  return false;
 }
 
 export interface GlobOptions {

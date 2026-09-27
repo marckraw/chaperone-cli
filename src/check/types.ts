@@ -97,6 +97,8 @@ export interface CheckSummary {
   disabledRules?: Array<{ id: string; source: string }>;
   /** Set when custom rules were limited to files changed since a git ref (`--since`) */
   since?: { ref: string; changedFiles: number };
+  /** Directories (ending in "/") and files that could not be read, so were not checked */
+  unreadable?: string[];
 }
 
 /**
