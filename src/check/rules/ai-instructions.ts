@@ -33,7 +33,7 @@ const EXTRACTION_PATTERNS = [
     ),
     extract: (match: RegExpExecArray) => ({
       type: "forbid" as const,
-      subject: match[1].trim(),
+      subject: (match[1] ?? "").trim(),
     }),
   },
   // "Use X instead of Y"
@@ -44,8 +44,8 @@ const EXTRACTION_PATTERNS = [
     ),
     extract: (match: RegExpExecArray) => ({
       type: "prefer" as const,
-      preferred: match[1].trim(),
-      forbidden: match[2].trim(),
+      preferred: (match[1] ?? "").trim(),
+      forbidden: (match[2] ?? "").trim(),
     }),
   },
   // "Always use X" / "Must use X"
@@ -56,7 +56,7 @@ const EXTRACTION_PATTERNS = [
     ),
     extract: (match: RegExpExecArray) => ({
       type: "require" as const,
-      subject: match[1].trim(),
+      subject: (match[1] ?? "").trim(),
     }),
   },
   // Code blocks with ❌ bad → ✅ good pattern
@@ -64,8 +64,8 @@ const EXTRACTION_PATTERNS = [
     pattern: /[❌✗]\s*`([^`]+)`\s*[→→]\s*[✅✓]\s*`([^`]+)`/g,
     extract: (match: RegExpExecArray) => ({
       type: "prefer" as const,
-      forbidden: match[1].trim(),
-      preferred: match[2].trim(),
+      forbidden: (match[1] ?? "").trim(),
+      preferred: (match[2] ?? "").trim(),
     }),
   },
   // "className" specific pattern (common in React Native)

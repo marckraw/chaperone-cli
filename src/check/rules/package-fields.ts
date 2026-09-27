@@ -41,8 +41,10 @@ export async function runPackageFieldsRule(
     return { ruleId: rule.id, results };
   }
 
+  const requiredFields = rule.requiredFields ?? [];
+
   // Check required fields
-  for (const field of rule.requiredFields) {
+  for (const field of requiredFields) {
     const value = getNestedField(packageJson, field);
 
     if (value === undefined) {
@@ -89,7 +91,7 @@ export async function runPackageFieldsRule(
   if (rule.fieldPatterns) {
     // Track fields already reported as missing from requiredFields
     const missingFields = new Set(
-      rule.requiredFields.filter((f) => getNestedField(packageJson, f) === undefined)
+      requiredFields.filter((f) => getNestedField(packageJson, f) === undefined)
     );
 
     for (const [field, pattern] of Object.entries(rule.fieldPatterns)) {

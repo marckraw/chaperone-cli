@@ -1,38 +1,96 @@
-import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { loadConfig } from "../check/config-loader";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { ConfigError, loadConfigWithDiagnostics } from "../check/config-loader";
+import { formatDiagnostic, validateRule } from "../check/config-schema";
 import { detectAIInstructionFiles } from "../check/rules/ai-instructions";
-import type { ChaperoneConfig, CustomRule } from "../check/types";
-import { mergeRules, countAIRules } from "./config-merger";
-import { extractRulesFromInstructions, validateExtractedRules } from "./llm-client";
-import type { AnalyzeOptions, AnalyzeResult } from "./types";
+import { DEFAULT_CONFIG, type ChaperoneConfig, type CustomRule } from "../check/types";
+import { countAIRules, mergeRulesIntoRawConfig, type RawConfig, type SkippedRule } from "./config-merger";
+import { extractRulesFromInstructions } from "./llm-client";
+import type { AnalyzeOptions, AnalyzeResult, SkippedInstruction } from "./types";
+import { EXIT, parseArgs, UsageError } from "../utils/args";
 
 const CONFIG_FILENAME = ".chaperone.json";
 
 /**
- * Run the analyze command
+ * Read the user's config file as written. Never falls back to a default: an unreadable
+ * or invalid file stops analyze before anything is written.
+ */
+function readRawConfig(configFile: string, label: string): RawConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(configFile, "utf-8"));
+  } catch (error) {
+    throw new ConfigError([
+      {
+        level: "error",
+        source: label,
+        message: `invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    ]);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ConfigError([{ level: "error", source: label, message: "config must be a JSON object" }]);
+  }
+  return parsed as RawConfig;
+}
+
+/**
+ * Validate extracted rules with the same schema `chaperone check` uses.
+ */
+function validateExtracted(rules: unknown[]): { valid: CustomRule[]; invalid: SkippedInstruction[] } {
+  const valid: CustomRule[] = [];
+  const invalid: SkippedInstruction[] = [];
+
+  rules.forEach((rule, index) => {
+    const { diagnostics, rule: normalized } = validateRule(rule, "extracted rules", ["rules", index]);
+    const errors = diagnostics.filter((diagnostic) => diagnostic.level === "error");
+    if (normalized && errors.length === 0) {
+      valid.push(normalized);
+      return;
+    }
+    const raw = rule as { id?: unknown; originalText?: unknown };
+    invalid.push({
+      text: typeof raw?.originalText === "string" ? raw.originalText : String(raw?.id ?? `rule #${index}`),
+      reason: `Invalid rule: ${errors.map((diagnostic) => formatDiagnostic(diagnostic)).join("; ")}`,
+    });
+  });
+
+  return { valid, invalid };
+}
+
+/**
+ * Run the analyze command.
+ *
+ * Only the user's own config file is patched: `extends` and every other field are kept,
+ * presets are never inlined, and nothing is written when the config fails to load.
+ *
+ * @throws {ConfigError} when the existing configuration is invalid (nothing is written)
  */
 export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
   const { cwd, configPath, dryRun, force, verbose, apiKey } = options;
+  const extract = options.extract ?? extractRulesFromInstructions;
 
   const log = verbose ? (msg: string) => console.log(`  ${msg}`) : () => {};
 
-  // Load existing config
+  const configFile = configPath ? resolve(cwd, configPath) : join(cwd, CONFIG_FILENAME);
+  const label = configPath ?? CONFIG_FILENAME;
+
+  // Load the existing configuration; any error aborts before the LLM call and before writing.
   log("Loading configuration...");
-  let config: ChaperoneConfig;
-  try {
-    config = loadConfig(cwd, configPath);
-  } catch {
-    // If no config exists, create a minimal one
-    config = { version: "1.0.0", rules: { custom: [] } };
+  let raw: RawConfig | null = null;
+  let merged: ChaperoneConfig = DEFAULT_CONFIG;
+  if (existsSync(configFile)) {
+    raw = readRawConfig(configFile, label);
+    merged = loadConfigWithDiagnostics(cwd, configFile).config;
+  } else {
+    log(`No config at ${label}; a new one will be created`);
   }
 
-  const existingAIRules = countAIRules(config);
-  log(`Found ${existingAIRules} existing AI-extracted rules`);
+  log(`Found ${countAIRules(raw ?? {})} existing AI-extracted rules`);
 
   // Detect AI instruction files
   log("Detecting AI instruction files...");
-  const aiFiles = detectAIInstructionFiles(cwd, config.aiInstructions);
+  const aiFiles = detectAIInstructionFiles(cwd, merged.aiInstructions);
 
   if (aiFiles.length === 0) {
     return {
@@ -43,6 +101,8 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
       skippedInstructions: [],
       summary: "No AI instruction files found.",
       aiFiles: [],
+      configPath: configFile,
+      written: false,
     };
   }
 
@@ -53,43 +113,48 @@ export async function analyze(options: AnalyzeOptions): Promise<AnalyzeResult> {
 
   // Extract rules using LLM
   log("Extracting rules using Claude...");
-  const rawResponse = await extractRulesFromInstructions(aiFiles, {
-    apiKey,
-    verbose,
-    onProgress: log,
-  });
+  const response = await extract(aiFiles, { apiKey, verbose, onProgress: log });
 
-  // Validate extracted rules
+  // Validate extracted rules with the full config schema
   log("Validating extracted rules...");
-  const response = validateExtractedRules(rawResponse, log);
+  const { valid, invalid } = validateExtracted(response.rules as unknown[]);
+  for (const entry of invalid) {
+    log(`Warning: ${entry.reason}`);
+  }
+  log(`Extracted ${valid.length} valid rules`);
 
-  log(`Extracted ${response.rules.length} valid rules`);
-
-  // Merge with existing config
-  log(force ? "Replacing existing AI rules..." : "Merging with existing rules...");
-  const { config: newConfig, added, skipped } = mergeRules(
-    config,
-    response.rules as CustomRule[],
-    force
+  // Merge into the user's own file; ids inherited from presets are not reused
+  const ownIds = new Set(
+    ((raw?.["rules"] as { custom?: unknown } | undefined)?.custom as Array<{ id?: unknown }> | undefined ?? [])
+      .map((rule) => rule?.id)
+      .filter((id): id is string => typeof id === "string")
+  );
+  const inheritedIds = new Set(
+    (merged.rules?.custom ?? []).map((rule) => rule.id).filter((id) => !ownIds.has(id))
   );
 
-  log(`Added: ${added.length}, Skipped (duplicate IDs): ${skipped.length}`);
+  log(force ? "Replacing existing AI rules..." : "Merging with existing rules...");
+  const { config: patched, added, skipped } = mergeRulesIntoRawConfig(raw, valid, { force, inheritedIds });
+  log(`Added: ${added.length}, Skipped: ${skipped.length}`);
 
   // Write config if not dry-run
+  let written = false;
   if (!dryRun && added.length > 0) {
-    const configFile = configPath ?? join(cwd, CONFIG_FILENAME);
     log(`Writing configuration to ${configFile}...`);
-    writeFileSync(configFile, JSON.stringify(newConfig, null, 2) + "\n", "utf-8");
+    writeFileSync(configFile, JSON.stringify(patched, null, 2) + "\n", "utf-8");
+    written = true;
   }
 
   return {
     success: true,
-    extractedRules: response.rules as CustomRule[],
+    extractedRules: valid,
     addedRules: added,
     skippedRules: skipped,
-    skippedInstructions: response.skipped ?? [],
+    skippedInstructions: [...(response.skipped ?? []), ...invalid],
     summary: response.summary,
     aiFiles,
+    configPath: configFile,
+    written,
   };
 }
 
@@ -135,9 +200,9 @@ export function formatAnalyzeResult(result: AnalyzeResult, dryRun: boolean): str
 
   if (result.skippedRules.length > 0) {
     lines.push("");
-    lines.push("Rules Skipped (already exist):");
-    for (const rule of result.skippedRules) {
-      lines.push(`  \x1b[33m○\x1b[0m ${rule.id}`);
+    lines.push("Rules Skipped:");
+    for (const { rule, reason } of result.skippedRules) {
+      lines.push(`  \x1b[33m○\x1b[0m ${rule.id} \x1b[2m(${reason})\x1b[0m`);
     }
   }
 
@@ -157,8 +222,8 @@ export function formatAnalyzeResult(result: AnalyzeResult, dryRun: boolean): str
   if (dryRun) {
     lines.push("\x1b[33mDry run - no changes written.\x1b[0m");
     lines.push("Run without --dry-run to save changes.");
-  } else if (result.addedRules.length > 0) {
-    lines.push(`\x1b[32m✓\x1b[0m Configuration updated with ${result.addedRules.length} new rule(s).`);
+  } else if (result.written) {
+    lines.push(`\x1b[32m✓\x1b[0m ${result.configPath} updated with ${result.addedRules.length} new rule(s).`);
   } else {
     lines.push("No new rules to add.");
   }
@@ -178,7 +243,17 @@ function truncate(str: string, maxLength: number): string {
  * CLI entry point for analyze command
  */
 export async function runAnalyze(args: string[]): Promise<number> {
-  const options = parseAnalyzeArgs(args);
+  let options: ReturnType<typeof parseAnalyzeArgs>;
+  try {
+    options = parseAnalyzeArgs(args);
+  } catch (error) {
+    if (error instanceof UsageError) {
+      console.error(`Error: ${error.message}`);
+      console.error('Run "chaperone analyze --help" for usage information.');
+      return EXIT.ERROR;
+    }
+    throw error;
+  }
 
   if (options.help) {
     console.log(ANALYZE_HELP_TEXT);
@@ -199,8 +274,14 @@ export async function runAnalyze(args: string[]): Promise<number> {
 
     console.log(formatAnalyzeResult(result, options.dryRun ?? false));
 
-    return result.success ? 0 : 1;
+    return result.success ? EXIT.OK : EXIT.ERROR;
   } catch (error) {
+    if (error instanceof ConfigError) {
+      console.error(`\x1b[31mError:\x1b[0m ${error.message}`);
+      console.error("");
+      console.error("The configuration was not changed. Fix it first (chaperone check lists every problem).");
+      return EXIT.ERROR;
+    }
     const message = error instanceof Error ? error.message : String(error);
 
     if (message.includes("ANTHROPIC_API_KEY")) {
@@ -219,61 +300,20 @@ export async function runAnalyze(args: string[]): Promise<number> {
       console.error(`\x1b[31mError:\x1b[0m ${message}`);
     }
 
-    return 1;
+    return EXIT.ERROR;
   }
 }
 
-interface AnalyzeArgs {
-  config?: string;
-  cwd?: string;
-  dryRun?: boolean;
-  force?: boolean;
-  verbose?: boolean;
-  apiKey?: string;
-  help?: boolean;
-}
-
-function parseAnalyzeArgs(args: string[]): AnalyzeArgs {
-  const result: AnalyzeArgs = {};
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    switch (arg) {
-      case "--help":
-      case "-h":
-        result.help = true;
-        break;
-
-      case "--config":
-      case "-c":
-        result.config = args[++i];
-        break;
-
-      case "--cwd":
-        result.cwd = args[++i];
-        break;
-
-      case "--dry-run":
-        result.dryRun = true;
-        break;
-
-      case "--force":
-        result.force = true;
-        break;
-
-      case "--verbose":
-      case "-v":
-        result.verbose = true;
-        break;
-
-      case "--api-key":
-        result.apiKey = args[++i];
-        break;
-    }
-  }
-
-  return result;
+function parseAnalyzeArgs(args: string[]) {
+  return parseArgs(args, {
+    help: { names: ["--help", "-h"], type: "boolean" },
+    config: { names: ["--config", "-c"], type: "string" },
+    cwd: { names: ["--cwd"], type: "string" },
+    dryRun: { names: ["--dry-run"], type: "boolean" },
+    force: { names: ["--force"], type: "boolean" },
+    verbose: { names: ["--verbose", "-v"], type: "boolean" },
+    apiKey: { names: ["--api-key"], type: "string" },
+  });
 }
 
 const ANALYZE_HELP_TEXT = `
@@ -317,3 +357,4 @@ AI INSTRUCTION FILES:
 
 // Re-export types
 export type { AnalyzeOptions, AnalyzeResult, SkippedInstruction } from "./types";
+export type { SkippedRule } from "./config-merger";

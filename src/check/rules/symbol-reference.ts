@@ -1,13 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync } from "../../utils/glob";
 import type { CheckResult, SymbolReferenceRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-
-interface ExportedSymbol {
-  name: string;
-  line: number;
-}
+import { findExportedFunctions } from "./utils/exported-functions";
+import { getRuleContext } from "./utils/rule-context";
 
 interface TargetReferenceScope {
   files: string[];
@@ -15,62 +9,17 @@ interface TargetReferenceScope {
   expectedLabel: string;
 }
 
-const FUNCTION_DECLARATION_REGEX = /^\s*export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm;
-const FUNCTION_VARIABLE_ARROW_REGEX =
-  /^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)(?:\s*:\s*[^=]+?)?\s*=>/gm;
-const FUNCTION_VARIABLE_EXPRESSION_REGEX = /^\s*export\s+const\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?function\b/gm;
-
-function getLineNumber(content: string, index: number): number {
-  let line = 1;
-  for (let i = 0; i < index; i++) {
-    if (content[i] === "\n") {
-      line += 1;
-    }
-  }
-  return line;
-}
-
-function collectMatches(content: string, regex: RegExp): ExportedSymbol[] {
-  const results: ExportedSymbol[] = [];
-  let match: RegExpExecArray | null = null;
-  regex.lastIndex = 0;
-
-  while ((match = regex.exec(content)) !== null) {
-    const name = match[1];
-    if (!name) {
-      continue;
-    }
-    results.push({
-      name,
-      line: getLineNumber(content, match.index),
-    });
-  }
-
-  return results;
-}
-
 function extractExportedSymbols(
   content: string,
-  kinds: Array<"function-declaration" | "function-variable">
-): ExportedSymbol[] {
-  const all: ExportedSymbol[] = [];
-
-  if (kinds.includes("function-declaration")) {
-    all.push(...collectMatches(content, FUNCTION_DECLARATION_REGEX));
-  }
-
-  if (kinds.includes("function-variable")) {
-    all.push(...collectMatches(content, FUNCTION_VARIABLE_ARROW_REGEX));
-    all.push(...collectMatches(content, FUNCTION_VARIABLE_EXPRESSION_REGEX));
-  }
-
-  const uniqueByName = new Map<string, ExportedSymbol>();
-  for (const symbol of all) {
-    if (!uniqueByName.has(symbol.name)) {
-      uniqueByName.set(symbol.name, symbol);
+  kinds: Array<"function-declaration" | "function-variable">,
+  filePath: string
+): Array<{ name: string; line: number }> {
+  const uniqueByName = new Map<string, { name: string; line: number }>();
+  for (const symbol of findExportedFunctions(content, filePath)) {
+    if (kinds.includes(symbol.kind) && !uniqueByName.has(symbol.name)) {
+      uniqueByName.set(symbol.name, { name: symbol.name, line: symbol.line });
     }
   }
-
   return Array.from(uniqueByName.values());
 }
 
@@ -118,20 +67,17 @@ export async function runSymbolReferenceRule(
   rule: SymbolReferenceRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
+  const context = getRuleContext(options);
+  const { index } = context;
+  const ruleExcludes = rule.exclude ?? [];
   const results: CheckResult[] = [];
 
-  const sourceFiles = globSync(rule.sourceFiles, { cwd, ignore: allExcludes });
-  const targetFiles = globSync(rule.targetFiles, { cwd, ignore: allExcludes });
+  const sourceFiles = index.glob(rule.sourceFiles, ruleExcludes);
+  const targetFiles = index.glob(rule.targetFiles, ruleExcludes);
 
   const targetContentByFile = new Map<string, string>();
   for (const filePath of targetFiles) {
-    try {
-      targetContentByFile.set(filePath, readFileSync(join(cwd, filePath), "utf-8"));
-    } catch {
-      targetContentByFile.set(filePath, "");
-    }
+    targetContentByFile.set(filePath, index.read(filePath) ?? "");
   }
 
   const kinds = rule.symbolKinds ?? ["function-declaration", "function-variable"];
@@ -150,16 +96,13 @@ export async function runSymbolReferenceRule(
 
   const symbolFilter = rule.symbolPattern ? new RegExp(rule.symbolPattern) : null;
 
-  for (const sourceFile of sourceFiles) {
-    const fullPath = join(cwd, sourceFile);
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+  for (const sourceFile of context.inScope(sourceFiles)) {
+    const content = index.read(sourceFile);
+    if (content === null) {
       continue;
     }
 
-    const exportedSymbols = extractExportedSymbols(content, kinds);
+    const exportedSymbols = extractExportedSymbols(content, kinds, sourceFile);
     const targetScope = resolveTargetScope({
       sourceFile,
       targetFiles,
@@ -202,6 +145,7 @@ export async function runSymbolReferenceRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: sourceFiles.length,
   };
 }
 

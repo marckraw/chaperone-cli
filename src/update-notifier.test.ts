@@ -3,9 +3,20 @@ import {
   compareSemver,
   evaluateCache,
   isCacheStale,
+  isUpdateCheckDisabled,
   formatUpdateNotice,
   type UpdateCache,
 } from "./update-notifier";
+
+describe("isUpdateCheckDisabled", () => {
+  test("honours CHAPERONE_NO_UPDATE_CHECK and CI", () => {
+    expect(isUpdateCheckDisabled({})).toBe(false);
+    expect(isUpdateCheckDisabled({ CHAPERONE_NO_UPDATE_CHECK: "1" })).toBe(true);
+    expect(isUpdateCheckDisabled({ CHAPERONE_NO_UPDATE_CHECK: "0" })).toBe(false);
+    expect(isUpdateCheckDisabled({ CHAPERONE_NO_UPDATE_CHECK: "false" })).toBe(false);
+    expect(isUpdateCheckDisabled({ CI: "true" })).toBe(true);
+  });
+});
 
 describe("compareSemver", () => {
   test("equal versions return 0", () => {

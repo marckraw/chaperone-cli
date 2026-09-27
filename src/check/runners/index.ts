@@ -1,13 +1,13 @@
-import type { ChaperoneConfig, CheckResult, ToolConfig } from "../types";
+import type { ChaperoneConfig, CheckResult, RunnerSummary, ToolConfig } from "../types";
 import type { Runner, RunnerOptions, RunnerResult } from "./types";
 import { typescriptRunner } from "./typescript";
 import { eslintRunner } from "./eslint";
 import { prettierRunner } from "./prettier";
 
 export * from "./types";
-export { typescriptRunner } from "./typescript";
-export { eslintRunner } from "./eslint";
-export { prettierRunner } from "./prettier";
+export { typescriptRunner, parseTypeScriptOutput, interpretTypeScriptRun } from "./typescript";
+export { eslintRunner, parseESLintOutput, interpretESLintRun } from "./eslint";
+export { prettierRunner, parsePrettierOutput, interpretPrettierRun } from "./prettier";
 
 /**
  * All available runners
@@ -20,8 +20,15 @@ const runners: Runner[] = [typescriptRunner, eslintRunner, prettierRunner];
 export interface AllRunnersResult {
   results: CheckResult[];
   bySource: Record<string, RunnerResult>;
+  /** One entry per runner, in a stable order */
+  summaries: RunnerSummary[];
   success: boolean;
 }
+
+/**
+ * Lifecycle callback for a single runner
+ */
+export type RunnerProgress = (runner: Runner, status: "start" | "done" | "skipped" | "failed") => void;
 
 /**
  * Get tool config for a runner
@@ -42,64 +49,126 @@ function getToolConfig(config: ChaperoneConfig, runnerName: string): ToolConfig 
   }
 }
 
+function summarize(runner: Runner, result: RunnerResult): RunnerSummary {
+  const errors = result.results.filter((entry) => entry.severity === "error").length;
+  const warnings = result.results.filter((entry) => entry.severity === "warning").length;
+  const status: RunnerSummary["status"] = result.skipped
+    ? "skipped"
+    : result.error
+      ? "error"
+      : errors > 0
+        ? "failed"
+        : "passed";
+
+  return {
+    name: runner.name,
+    label: runner.label,
+    status,
+    reason: result.skipped ? result.skipReason : result.error,
+    durationMs: result.durationMs,
+    errors,
+    warnings,
+  };
+}
+
+async function runOne(
+  runner: Runner,
+  config: ChaperoneConfig,
+  options: Omit<RunnerOptions, "config">,
+  onRunner?: RunnerProgress
+): Promise<RunnerResult> {
+  const toolConfig = getToolConfig(config, runner.name);
+
+  if (toolConfig?.enabled === false) {
+    onRunner?.(runner, "skipped");
+    return {
+      source: runner.name,
+      results: [],
+      success: true,
+      skipped: true,
+      skipReason: `disabled in config (rules.${runner.name}.enabled: false)`,
+    };
+  }
+
+  const availability = runner.detect(options.cwd, toolConfig);
+  if (!availability.available) {
+    onRunner?.(runner, "skipped");
+    return {
+      source: runner.name,
+      results: [],
+      success: true,
+      skipped: true,
+      skipReason: availability.reason,
+    };
+  }
+
+  onRunner?.(runner, "start");
+  const startedAt = Date.now();
+  let result: RunnerResult;
+  try {
+    result = await runner.run({ ...options, binary: availability.binary, config: toolConfig });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result = {
+      source: runner.name,
+      results: [
+        {
+          file: "",
+          rule: `${runner.name}/runner-error`,
+          message: `${runner.label} runner crashed: ${message}`,
+          severity: "error",
+          source: runner.name,
+        },
+      ],
+      success: false,
+      error: `${runner.label} runner crashed: ${message}`,
+    };
+  }
+  result.durationMs = Date.now() - startedAt;
+  onRunner?.(runner, result.skipped ? "skipped" : result.error ? "failed" : "done");
+  return result;
+}
+
+/** With --fix, the fixers must not rewrite files at the same time: fix, format, then type-check */
+const SEQUENTIAL_ORDER = ["eslint", "prettier", "typescript"];
+
 /**
- * Run all enabled tool runners
+ * Run all enabled tool runners: concurrently, or one after another with
+ * `sequential` (used for --fix, since ESLint and Prettier rewrite the same files).
  */
 export async function runAllTools(
   config: ChaperoneConfig,
-  options: Omit<RunnerOptions, "config">
+  options: Omit<RunnerOptions, "config"> & { onRunner?: RunnerProgress; sequential?: boolean }
 ): Promise<AllRunnersResult> {
-  const { cwd, fix, files } = options;
-  const allResults: CheckResult[] = [];
-  const bySource: Record<string, RunnerResult> = {};
-  let allSuccess = true;
-
-  for (const runner of runners) {
-    const toolConfig = getToolConfig(config, runner.name);
-
-    // Skip if explicitly disabled
-    if (toolConfig?.enabled === false) {
-      bySource[runner.name] = {
-        source: runner.name,
-        results: [],
-        success: true,
-        skipped: true,
-      };
-      continue;
+  const { onRunner, sequential, ...runnerOptions } = options;
+  let finished: RunnerResult[];
+  if (sequential) {
+    const byName = new Map<string, RunnerResult>();
+    for (const name of SEQUENTIAL_ORDER) {
+      const runner = runners.find((candidate) => candidate.name === name)!;
+      byName.set(name, await runOne(runner, config, runnerOptions, onRunner));
     }
-
-    // Check if tool is available
-    const available = await runner.isAvailable(cwd);
-    if (!available) {
-      bySource[runner.name] = {
-        source: runner.name,
-        results: [],
-        success: true,
-        skipped: true,
-      };
-      continue;
-    }
-
-    // Run the tool
-    const result = await runner.run({
-      cwd,
-      fix,
-      files,
-      config: toolConfig,
-    });
-
-    bySource[runner.name] = result;
-    allResults.push(...result.results);
-
-    if (!result.success && !result.skipped) {
-      allSuccess = false;
-    }
+    finished = runners.map((runner) => byName.get(runner.name)!);
+  } else {
+    finished = await Promise.all(runners.map((runner) => runOne(runner, config, runnerOptions, onRunner)));
   }
 
+  const bySource: Record<string, RunnerResult> = {};
+  const results: CheckResult[] = [];
+  const summaries: RunnerSummary[] = [];
+
+  runners.forEach((runner, index) => {
+    const result = finished[index]!;
+    bySource[runner.name] = result;
+    results.push(...result.results);
+    summaries.push(summarize(runner, result));
+  });
+
   return {
-    results: allResults,
+    results,
     bySource,
-    success: allSuccess,
+    summaries,
+    success: finished.every((result) => result.success || result.skipped === true),
   };
 }
 

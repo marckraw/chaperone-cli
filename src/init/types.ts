@@ -47,19 +47,12 @@ export interface ProjectConfig {
   packageManager: PackageManagerDetection | null;
 }
 
-export interface IntegrationsConfig {
-  respectEslintIgnore: boolean;
-  respectPrettierIgnore: boolean;
-  useTypescriptPaths: boolean;
-}
-
 export interface ChaperoneConfig {
   version: string;
   project: ProjectConfig;
   rules: Record<string, unknown>;
   include: string[];
   exclude: string[];
-  integrations: IntegrationsConfig;
 }
 
 export interface InitOptions {

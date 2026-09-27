@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync } from "../../utils/glob";
+import { analyzeBrackets, jsxEnabledFor, tokenize, type Token } from "../../utils/js-lexer";
+import { createLineIndex } from "../../utils/text";
 import type { CheckResult, DirectiveExportPatternRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 interface NamedExport {
   name: string;
@@ -26,47 +26,70 @@ function getLeadingDirective(content: string): string | null {
   return match?.[1] ?? null;
 }
 
-function getLineNumber(content: string, index: number): number {
-  return content.slice(0, index).split("\n").length;
-}
+const isName = (token: Token | undefined, value?: string): boolean =>
+  token !== undefined && token.type === "name" && (value === undefined || token.value === value);
 
-function extractNamedExports(content: string): NamedExport[] {
+const isPunct = (token: Token | undefined, value: string): boolean =>
+  token !== undefined && token.type === "punct" && token.value === value;
+
+/**
+ * Runtime (non-type) named exports of a module, found with the tokenizer so
+ * comments and strings are ignored. Default exports and type-only exports are skipped.
+ */
+export function extractNamedExports(content: string, filePath = "module.tsx"): NamedExport[] {
+  const tokens = tokenize(content, { jsx: jsxEnabledFor(filePath) });
+  const { depth } = analyzeBrackets(tokens);
+  const lines = createLineIndex(content);
   const exports: NamedExport[] = [];
-  let match: RegExpExecArray | null;
 
-  const declarationRegex =
-    /export\s+(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z0-9_]+)/g;
+  for (let index = 0; index < tokens.length; index++) {
+    if (depth[index] !== 0 || !isName(tokens[index], "export") || isPunct(tokens[index - 1], ".")) continue;
+    const line = lines.lineAt(tokens[index]!.start);
+    let cursor = index + 1;
 
-  while ((match = declarationRegex.exec(content)) !== null) {
-    exports.push({
-      name: match[1],
-      line: getLineNumber(content, match.index),
-    });
-  }
+    if (isName(tokens[cursor], "default") || isName(tokens[cursor], "type") || isName(tokens[cursor], "interface")) {
+      continue;
+    }
+    if (isName(tokens[cursor], "declare")) cursor++;
+    if (isName(tokens[cursor], "async")) cursor++;
 
-  const reExportRegex =
-    /export\s+(?!type\b)\{([\s\S]*?)\}(?:\s*from\s*["'][^"']+["'])?/g;
-
-  while ((match = reExportRegex.exec(content)) !== null) {
-    const line = getLineNumber(content, match.index);
-    const specifiers = match[1]
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    for (const specifier of specifiers) {
-      if (specifier.startsWith("type ")) {
-        continue;
+    if (isName(tokens[cursor], "function")) {
+      cursor++;
+      if (isPunct(tokens[cursor], "*")) cursor++;
+    } else if (isName(tokens[cursor], "const") && isName(tokens[cursor + 1], "enum")) {
+      cursor += 2;
+    } else if (["const", "let", "var", "class", "enum"].some((keyword) => isName(tokens[cursor], keyword))) {
+      cursor++;
+    } else if (isPunct(tokens[cursor], "*")) {
+      // export * as ns from "x"
+      if (isName(tokens[cursor + 1], "as") && isName(tokens[cursor + 2])) {
+        exports.push({ name: tokens[cursor + 2]!.value, line });
       }
-
-      const aliasMatch = specifier.match(/\bas\s+([A-Za-z0-9_]+)$/);
-      const name = aliasMatch ? aliasMatch[1] : specifier.replace(/\s+/g, "");
-
-      if (name === "default") {
-        continue;
+      continue;
+    } else if (isPunct(tokens[cursor], "{")) {
+      let specifier: Token[] = [];
+      const flush = () => {
+        const [first, ...rest] = specifier;
+        const isTypeOnly = isName(first, "type") && rest.length > 0 && !(isName(rest[0], "as") && rest.length === 2);
+        const asIndex = specifier.findIndex((token, position) => position > 0 && isName(token, "as"));
+        const nameToken = asIndex > 0 ? specifier[asIndex + 1] : specifier[specifier.length - 1];
+        const name = nameToken?.type === "string" || nameToken?.type === "name" ? nameToken.value : null;
+        if (!isTypeOnly && name && name !== "default") exports.push({ name, line });
+        specifier = [];
+      };
+      for (cursor++; cursor < tokens.length && !isPunct(tokens[cursor], "}"); cursor++) {
+        if (isPunct(tokens[cursor], ",")) flush();
+        else specifier.push(tokens[cursor]!);
       }
+      if (specifier.length > 0) flush();
+      continue;
+    } else {
+      continue;
+    }
 
-      exports.push({ name, line });
+    const nameToken = tokens[cursor];
+    if (isName(nameToken)) {
+      exports.push({ name: nameToken!.value, line });
     }
   }
 
@@ -77,25 +100,18 @@ export async function runDirectiveExportPatternRule(
   rule: DirectiveExportPatternRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   const allowedPatterns = rule.allowedExportNamePatterns
     .map((pattern) => compileRegex(pattern))
     .filter((pattern): pattern is RegExp => pattern !== null);
 
-  for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+  for (const file of context.inScope(files)) {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -103,7 +119,7 @@ export async function runDirectiveExportPatternRule(
       continue;
     }
 
-    for (const exported of extractNamedExports(content)) {
+    for (const exported of extractNamedExports(content, file)) {
       const isAllowed = allowedPatterns.some((pattern) => pattern.test(exported.name));
 
       if (isAllowed) {
@@ -129,6 +145,7 @@ export async function runDirectiveExportPatternRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

@@ -1,8 +1,21 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync } from "../../utils/glob";
+import { createLineIndex, matchesEmptyString, regexMatches, truncate } from "../../utils/text";
 import type { CheckResult, RegexRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
+
+/**
+ * Default flags: `m`, so `^` and `$` match at every line start and end.
+ */
+export const DEFAULT_REGEX_FLAGS = "m";
+
+/**
+ * The flags a regex rule runs with: the rule's `flags` (default "m") plus "g".
+ * "g" and "y" are managed by Chaperone and removed from user input.
+ */
+export function resolveRegexFlags(flags: string | undefined): string {
+  const requested = (flags ?? DEFAULT_REGEX_FLAGS).replace(/[gy]/g, "");
+  return `${[...new Set(requested)].join("")}g`;
+}
 
 /**
  * Run regex rule to find forbidden/required patterns
@@ -11,30 +24,27 @@ export async function runRegexRule(
   rule: RegexRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
-  // Merge global excludes with rule-specific excludes
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
+  // Find files matching the glob pattern (global excludes are applied by the index)
+  const files = index.glob(rule.files, rule.exclude ?? []);
+  const flags = resolveRegexFlags(rule.flags);
+  const shownPattern = `/${rule.pattern}/${flags.replace("g", "")}`;
 
-  // Find files matching the glob pattern
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
-
-  // Compile the regex
+  // Compile the regex (validated at load time; guard programmatic callers)
   let regex: RegExp;
   try {
-    regex = new RegExp(rule.pattern, "g");
-  } catch (err) {
+    regex = new RegExp(rule.pattern, flags);
+  } catch (error) {
     return {
       ruleId: rule.id,
       results: [
         {
-          file: "",
+          file: ".chaperone.json",
           rule: `regex/${rule.id}`,
-          message: `Invalid regex pattern: ${rule.pattern}`,
+          message: `Invalid regex pattern ${shownPattern}: ${error instanceof Error ? error.message : String(error)}`,
           severity: "error",
           source: "custom",
         },
@@ -42,74 +52,74 @@ export async function runRegexRule(
     };
   }
 
-  for (const file of files) {
-    const fullPath = join(cwd, file);
+  // Legacy alias, normally normalized at load time
+  const mustMatch = rule.mustMatch ?? (rule.forbidden === undefined ? false : !rule.forbidden);
 
-    let content: string;
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+  // Zero-length matches are real for lookaheads such as (?=console\.log), but noise for
+  // patterns that match the empty string anywhere (such as "TODO|"), which are warned about.
+  const includeEmpty = !matchesEmptyString(regex);
+
+  for (const file of context.inScope(files)) {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
-    if (rule.mustMatch) {
+    if (mustMatch) {
       // Pattern MUST be present
-      regex.lastIndex = 0;
-      const hasMatch = regex.test(content);
-      if (!hasMatch) {
+      const first = regexMatches(content, regex, { includeEmpty }).next();
+      if (first.done) {
         results.push({
           file,
-          rule: `regex/${rule.id}`,
-          message: rule.message,
-          severity: rule.severity,
-          source: "custom",
-        });
-      }
-    } else {
-      // Pattern must NOT be present (default)
-      // Reset regex state
-      regex.lastIndex = 0;
-
-      // Find all matches with line numbers
-      let match: RegExpExecArray | null;
-      const lines = content.split("\n");
-
-      while ((match = regex.exec(content)) !== null) {
-        // Find line number
-        const beforeMatch = content.substring(0, match.index);
-        const lineNumber = beforeMatch.split("\n").length;
-
-        // Find column
-        const lastNewline = beforeMatch.lastIndexOf("\n");
-        const column = match.index - lastNewline;
-
-        // Get surrounding lines for context
-        const surroundingLines: string[] = [];
-        const startLine = Math.max(0, lineNumber - 2);
-        const endLine = Math.min(lines.length, lineNumber + 1);
-        for (let i = startLine; i < endLine; i++) {
-          const prefix = i === lineNumber - 1 ? ">" : " ";
-          surroundingLines.push(`${prefix} ${i + 1} | ${lines[i]}`);
-        }
-
-        results.push({
-          file,
-          line: lineNumber,
-          column,
           rule: `regex/${rule.id}`,
           message: rule.message,
           severity: rule.severity,
           source: "custom",
           context: {
-            matchedText: match[0],
-            surroundingLines,
+            expectedValue: `a match for ${shownPattern}`,
+            actualValue: "no match",
           },
         });
+      }
+      continue;
+    }
 
-        // If reportOnce is enabled, only report the first match per file
-        if (rule.reportOnce) {
-          break;
-        }
+    // Pattern must NOT be present (default)
+    const lines = createLineIndex(content);
+    for (const match of regexMatches(content, regex, { includeEmpty })) {
+      // Point at the first non-whitespace character: with `^\s*...` the match can start on a blank line
+      const text = match[0];
+      const leading = text.length - text.trimStart().length;
+      const offset = leading < text.length ? match.index + leading : match.index;
+      const lineNumber = lines.lineAt(offset);
+
+      // Surrounding lines for context
+      const surroundingLines: string[] = [];
+      const startLine = Math.max(1, lineNumber - 1);
+      const endLine = Math.min(lines.lineCount, lineNumber + 1);
+      for (let current = startLine; current <= endLine; current++) {
+        const prefix = current === lineNumber ? ">" : " ";
+        surroundingLines.push(`${prefix} ${current} | ${lines.line(current)}`);
+      }
+
+      results.push({
+        file,
+        line: lineNumber,
+        column: lines.columnAt(offset),
+        rule: `regex/${rule.id}`,
+        message: rule.message,
+        severity: rule.severity,
+        source: "custom",
+        context: {
+          // A zero-length match (lookahead) shows the rest of the line it points at
+          matchedText: text === "" ? truncate(restOfLine(content, offset), 80) : truncate(text.trim() || text),
+          surroundingLines,
+        },
+      });
+
+      // If reportOnce is enabled, only report the first match per file
+      if (rule.reportOnce) {
+        break;
       }
     }
   }
@@ -117,7 +127,13 @@ export async function runRegexRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
+}
+
+function restOfLine(content: string, offset: number): string {
+  const lineEnd = content.indexOf("\n", offset);
+  return content.slice(offset, lineEnd === -1 ? undefined : lineEnd).replace(/\r$/, "");
 }
 
 /**

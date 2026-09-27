@@ -1,11 +1,9 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname, relative, resolve, basename } from "node:path";
-import { globSync } from "../../utils/glob";
+import { basename, posix } from "node:path";
+import type { FileIndex } from "../../utils/file-index";
+import { compileGlob, normalizeGlob } from "../../utils/glob";
 import type { CheckResult, PublicApiRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-import { extractImports } from "./utils/import-extractor";
-
-const EXTENSIONS_TO_TRY = [".ts", ".tsx", ".js", ".jsx"];
+import { createUnresolvedAliasTracker, getRuleContext } from "./utils/rule-context";
 
 /**
  * Discover module root directories matching the modules glob pattern.
@@ -13,167 +11,90 @@ const EXTENSIONS_TO_TRY = [".ts", ".tsx", ".js", ".jsx"];
  */
 function discoverModuleRoots(
   modulesPattern: string,
-  cwd: string,
-  ignore: string[]
+  index: FileIndex,
+  ignore: readonly string[]
 ): string[] {
-  const parts = modulesPattern.split("/");
-  const lastPart = parts[parts.length - 1];
-
-  if (lastPart === "*") {
-    const parentPath = parts.slice(0, -1).join("/");
-    const fullParentPath = join(cwd, parentPath);
-
-    if (!existsSync(fullParentPath)) {
-      return [];
-    }
-
-    try {
-      const { readdirSync } = require("node:fs");
-      const entries = readdirSync(fullParentPath, { withFileTypes: true });
-      return entries
-        .filter((e: any) => e.isDirectory())
-        .map((e: any) => join(parentPath, e.name));
-    } catch {
-      return [];
-    }
-  }
-
-  // Fallback: glob for files and extract unique module root paths
-  const files = globSync(modulesPattern + "/**/*", { cwd, ignore });
+  const pattern = normalizeGlob(modulesPattern).replace(/\/+$/, "");
+  const isModuleRoot = compileGlob(pattern);
   const roots = new Set<string>();
-  for (const file of files) {
-    const fileParts = file.split("/");
-    if (fileParts.length > parts.length) {
-      const rootPath = fileParts.slice(0, parts.length).join("/");
-      roots.add(rootPath);
+  // The module root of a file is its shortest parent directory that matches `modules`
+  // (this also works for patterns with `**`, such as "src/**/features/*").
+  for (const file of index.glob(`${pattern}/**`, ignore)) {
+    const segments = file.split("/");
+    let directory = "";
+    for (let position = 0; position < segments.length - 1; position++) {
+      directory = position === 0 ? segments[0]! : `${directory}/${segments[position]}`;
+      if (isModuleRoot(directory)) {
+        roots.add(directory);
+        break;
+      }
     }
   }
   return Array.from(roots).sort();
 }
 
+/** File name without its extension(s): "index.ts" → "index", "types.d.ts" → "types" */
+function stem(path: string): string {
+  return basename(path).replace(/(\.d)?\.[^.]+$/, "");
+}
+
 /**
- * Check if a resolved import path goes through a module's barrel file.
+ * Whether a resolved import target is the module's public entry point.
+ * `import "../features/auth"` resolves to `src/features/auth/index.ts` and passes;
+ * the barrel may use any extension (index.ts, index.tsx, index.js, ...).
  */
-function isBarrelImport(
-  importSource: string,
-  resolvedPath: string,
-  moduleRoot: string,
-  barrelFile: string
-): boolean {
-  // The import should resolve to the module root's barrel file
-  const barrelPath = join(moduleRoot, barrelFile);
-
-  // Check if resolved path IS the barrel file
-  if (resolvedPath === barrelPath) return true;
-
-  // Also check without extension
-  const barrelNoExt = barrelPath.replace(/\.[^.]+$/, "");
-  const resolvedNoExt = resolvedPath.replace(/\.[^.]+$/, "");
-  if (resolvedNoExt === barrelNoExt) return true;
-
-  // Check if import targets module root directly (will resolve to index)
-  const resolvedDir = dirname(resolvedPath);
-  if (
-    resolvedDir === moduleRoot &&
-    basename(resolvedPath).startsWith("index.")
-  ) {
-    return true;
-  }
-
-  return false;
+export function isBarrelFile(resolvedPath: string, moduleRoot: string, barrelFile: string): boolean {
+  return posix.dirname(resolvedPath) === moduleRoot && stem(resolvedPath) === stem(barrelFile);
 }
 
 export async function runPublicApiRule(
   rule: PublicApiRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
+  const notices: string[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
   const barrelFile = rule.barrelFile ?? "index.ts";
   const allowSameModule = rule.allowSameModule ?? true;
 
   // Discover module roots
-  const moduleRoots = discoverModuleRoots(rule.modules, cwd, allExcludes);
+  const moduleRoots = discoverModuleRoots(rule.modules, index, rule.exclude ?? []);
+  if (moduleRoots.length === 0) {
+    notices.push(`"modules" (${rule.modules}) matched no module directories`);
+  }
+
+  // The most specific module containing a path
+  const moduleOf = (path: string) =>
+    moduleRoots
+      .filter((root) => path.startsWith(`${root}/`))
+      .reduce<string | undefined>((best, root) => (!best || root.length > best.length ? root : best), undefined);
 
   // Get all files to check
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
+  const unresolvedAliases = createUnresolvedAliasTracker();
 
-  for (const file of files) {
-    const fullPath = join(cwd, file);
+  for (const file of context.inScope(files)) {
+    const fileModule = moduleOf(file);
 
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
-      continue;
-    }
-
-    const imports = extractImports(content, {
-      includeTypeImports: true,
-      includeDynamicImports: true,
-      includeRequire: true,
-    });
-
-    // Determine which module this file belongs to (if any)
-    const fileModule = moduleRoots.find(
-      (root) => file.startsWith(root + "/") || file === root
-    );
-
-    for (const imp of imports) {
-      // Only check relative imports
-      if (!imp.source.startsWith("./") && !imp.source.startsWith("../")) {
+    for (const entry of context.imports(file)) {
+      // Relative imports and tsconfig aliases both resolve to project files
+      const resolvedPath = context.resolveImport(entry.source, file);
+      if (!resolvedPath) {
+        unresolvedAliases.record(entry.source);
         continue;
       }
 
-      // Resolve the import path
-      const importingDir = dirname(join(cwd, file));
-      const resolved = resolve(importingDir, imp.source);
-      const relativeResolved = relative(cwd, resolved);
-
-      // Find the actual file (try extensions)
-      let resolvedPath: string | null = null;
-      if (existsSync(resolved)) {
-        resolvedPath = relativeResolved;
-      } else {
-        for (const ext of EXTENSIONS_TO_TRY) {
-          const withExt = resolved + ext;
-          if (existsSync(withExt)) {
-            resolvedPath = relative(cwd, withExt);
-            break;
-          }
-        }
-        // Try index files
-        if (!resolvedPath) {
-          for (const ext of EXTENSIONS_TO_TRY) {
-            const indexPath = join(resolved, "index" + ext);
-            if (existsSync(indexPath)) {
-              resolvedPath = relative(cwd, indexPath);
-              break;
-            }
-          }
-        }
-      }
-
-      if (!resolvedPath) continue;
-
       // Check if this import targets a module
-      const targetModule = moduleRoots.find(
-        (root) =>
-          resolvedPath!.startsWith(root + "/") || resolvedPath === root
-      );
-
+      const targetModule = moduleOf(resolvedPath);
       if (!targetModule) continue;
 
       // Same-module deep imports allowed if configured
       if (allowSameModule && fileModule === targetModule) continue;
 
       // Check if it goes through the barrel file
-      if (!isBarrelImport(imp.source, resolvedPath, targetModule, barrelFile)) {
+      if (!isBarrelFile(resolvedPath, targetModule, barrelFile)) {
         results.push({
           file,
           rule: `public-api/${rule.id}`,
@@ -182,9 +103,9 @@ export async function runPublicApiRule(
             `Import from "${targetModule}" must go through the public API (${barrelFile})`,
           severity: rule.severity,
           source: "custom",
-          line: imp.line,
+          line: entry.line,
           context: {
-            matchedText: imp.source,
+            matchedText: entry.source,
             expectedValue: `Import via ${targetModule}/${barrelFile}`,
             actualValue: `Deep import: ${resolvedPath}`,
           },
@@ -193,9 +114,15 @@ export async function runPublicApiRule(
     }
   }
 
+  const aliasNotice = unresolvedAliases.notice();
+  if (aliasNotice) notices.push(aliasNotice);
+
   return {
     ruleId: rule.id,
     results,
+    // Without module directories nothing can be checked, whatever `files` matches
+    filesChecked: moduleRoots.length === 0 ? 0 : files.length,
+    notices,
   };
 }
 

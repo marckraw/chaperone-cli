@@ -1,18 +1,31 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
-import { execCommand, findNpmBinary } from "../../utils/process";
+import { relative } from "node:path";
+import { execCommand, findBinary, type ExecResult } from "../../utils/process";
+import {
+  ESLINT_FLAT_CONFIG_FILES,
+  ESLINT_LEGACY_CONFIG_FILES,
+  findConfigFile,
+  packageJsonHasKey,
+} from "../../utils/tool-configs";
 import type { CheckResult } from "../types";
-import type { Runner, RunnerOptions, RunnerResult } from "./types";
+import {
+  DEFAULT_RUNNER_TIMEOUT_MS,
+  runnerFailure,
+  type Runner,
+  type RunnerAvailability,
+  type RunnerOptions,
+  type RunnerResult,
+} from "./types";
 
 /**
  * ESLint JSON output format
  */
 interface ESLintMessage {
   ruleId: string | null;
-  severity: 1 | 2;
+  severity: 0 | 1 | 2;
   message: string;
-  line: number;
-  column: number;
+  line?: number;
+  column?: number;
+  fatal?: boolean;
   fix?: {
     range: [number, number];
     text: string;
@@ -22,85 +35,113 @@ interface ESLintMessage {
 interface ESLintFileResult {
   filePath: string;
   messages: ESLintMessage[];
-  errorCount: number;
-  warningCount: number;
-  fixableErrorCount: number;
-  fixableWarningCount: number;
 }
 
 /**
- * Parse ESLint JSON output
+ * Parse ESLint `--format json` output. Returns null when the output is not ESLint JSON.
  */
-function parseESLintOutput(output: string, cwd: string): CheckResult[] {
-  const results: CheckResult[] = [];
-
-  if (!output.trim()) {
-    return results;
+export function parseESLintOutput(output: string, cwd: string): CheckResult[] | null {
+  const trimmed = output.trim();
+  if (!trimmed.startsWith("[")) {
+    return null;
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(output) as ESLintFileResult[];
-
-    for (const file of parsed) {
-      const relativePath = relative(cwd, file.filePath);
-
-      for (const msg of file.messages) {
-        results.push({
-          file: relativePath,
-          line: msg.line,
-          column: msg.column,
-          rule: `eslint/${msg.ruleId ?? "unknown"}`,
-          message: msg.message,
-          severity: msg.severity === 2 ? "error" : "warning",
-          source: "eslint",
-          fixable: !!msg.fix,
-        });
-      }
-    }
+    parsed = JSON.parse(trimmed);
   } catch {
-    // If JSON parse fails, try line-by-line parsing
-    // This handles cases where eslint outputs non-JSON errors
+    return null;
+  }
+  if (!Array.isArray(parsed)) {
+    return null;
   }
 
+  const results: CheckResult[] = [];
+  for (const file of parsed as ESLintFileResult[]) {
+    const relativePath = relative(cwd, file.filePath);
+    for (const msg of file.messages ?? []) {
+      if (msg.severity === 0) continue;
+      results.push({
+        file: relativePath,
+        line: msg.line,
+        column: msg.column,
+        rule: `eslint/${msg.ruleId ?? (msg.fatal ? "parse-error" : "unknown")}`,
+        message: msg.message,
+        severity: msg.severity === 2 || msg.fatal ? "error" : "warning",
+        source: "eslint",
+        fixable: !!msg.fix,
+      });
+    }
+  }
   return results;
 }
 
 /**
- * Check if ESLint config exists
+ * Turn a finished ESLint process into a runner result. Fails closed: exit code 2
+ * (configuration or internal error) or unparseable output is an error, never a pass.
  */
-function hasESLintConfig(cwd: string): boolean {
-  const configFiles = [
-    "eslint.config.js",
-    "eslint.config.mjs",
-    "eslint.config.cjs",
-    ".eslintrc",
-    ".eslintrc.js",
-    ".eslintrc.cjs",
-    ".eslintrc.json",
-    ".eslintrc.yml",
-    ".eslintrc.yaml",
-  ];
+export function interpretESLintRun(execResult: ExecResult, cwd: string, command: string): RunnerResult {
+  const results = parseESLintOutput(execResult.stdout, cwd);
 
-  for (const file of configFiles) {
-    if (existsSync(join(cwd, file))) {
-      return true;
+  const failure = (reason: string): RunnerResult => ({
+    source: "eslint",
+    results: [
+      runnerFailure({
+        source: "eslint",
+        message: reason,
+        command,
+        exitCode: execResult.exitCode,
+        stdout: execResult.stdout,
+        stderr: execResult.stderr,
+      }),
+    ],
+    success: false,
+    error: reason,
+  });
+
+  if (execResult.timedOut) {
+    return failure("ESLint timed out");
+  }
+  if (execResult.spawnError) {
+    return failure(`ESLint could not be started: ${execResult.spawnError}`);
+  }
+  if (execResult.exitCode === 2) {
+    return failure("ESLint exited with code 2 (configuration or internal error)");
+  }
+  if (results === null) {
+    if (execResult.exitCode === 0 && execResult.stdout.trim() === "") {
+      return { source: "eslint", results: [], success: true };
     }
+    return failure(`ESLint exited with code ${execResult.exitCode} and its output could not be parsed`);
+  }
+  if (execResult.exitCode !== 0 && results.length === 0) {
+    return failure(`ESLint exited with code ${execResult.exitCode} without reporting any problems`);
+  }
+  if (execResult.exitCode !== 0 && !results.some((result) => result.severity === "error")) {
+    // e.g. --max-warnings exceeded: ESLint failed the run, so the check must fail too
+    results.push({
+      file: "",
+      rule: "eslint/max-warnings",
+      message: `ESLint exited with code ${execResult.exitCode} although it reported only warnings (for example --max-warnings was exceeded)`,
+      severity: "error",
+      source: "eslint",
+      context: { command, exitCode: execResult.exitCode },
+    });
   }
 
-  // Check package.json for eslintConfig
-  const pkgPath = join(cwd, "package.json");
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      if (pkg.eslintConfig) {
-        return true;
-      }
-    } catch {
-      // Ignore parse errors
-    }
-  }
+  return {
+    source: "eslint",
+    results,
+    success: results.every((result) => result.severity !== "error"),
+  };
+}
 
-  return false;
+function detectESLintConfig(cwd: string): string | null {
+  return (
+    findConfigFile(cwd, ESLINT_FLAT_CONFIG_FILES) ??
+    findConfigFile(cwd, ESLINT_LEGACY_CONFIG_FILES) ??
+    (packageJsonHasKey(cwd, "eslintConfig") ? "package.json" : null)
+  );
 }
 
 /**
@@ -108,65 +149,45 @@ function hasESLintConfig(cwd: string): boolean {
  */
 export const eslintRunner: Runner = {
   name: "eslint",
+  label: "ESLint",
+
+  detect(cwd: string): RunnerAvailability {
+    if (!detectESLintConfig(cwd)) {
+      return { available: false, reason: "no ESLint config in the project root" };
+    }
+    const binary = findBinary("eslint", cwd);
+    if (!binary) {
+      return {
+        available: false,
+        reason: "ESLint config found, but no eslint binary (looked in node_modules/.bin and PATH)",
+      };
+    }
+    return { available: true, binary };
+  },
 
   async isAvailable(cwd: string): Promise<boolean> {
-    if (!hasESLintConfig(cwd)) {
-      return false;
-    }
-
-    const eslintPath = await findNpmBinary("eslint", cwd);
-    return eslintPath !== null;
+    return this.detect(cwd).available;
   },
 
   async run(options: RunnerOptions): Promise<RunnerResult> {
     const { cwd, fix, config, files } = options;
-
-    if (config?.enabled === false) {
-      return {
-        source: "eslint",
-        results: [],
-        success: true,
-        skipped: true,
-      };
-    }
-
-    const eslintPath = await findNpmBinary("eslint", cwd);
-    if (!eslintPath) {
-      return {
-        source: "eslint",
-        results: [],
-        success: false,
-        error: "ESLint not found",
-      };
+    const binary = options.binary ?? findBinary("eslint", cwd);
+    if (!binary) {
+      return { source: "eslint", results: [], success: true, skipped: true, skipReason: "no eslint binary found" };
     }
 
     const args = ["--format", "json"];
-
     if (fix) {
       args.push("--fix");
     }
+    args.push(...(config?.args ?? []));
+    args.push(...(files && files.length > 0 ? files : ["."]));
 
-    // Add custom args
-    if (config?.args) {
-      args.push(...config.args);
-    }
+    const execResult = await execCommand(binary, args, {
+      cwd,
+      timeout: options.timeoutMs ?? DEFAULT_RUNNER_TIMEOUT_MS,
+    });
 
-    // Add files or default to current directory
-    if (files && files.length > 0) {
-      args.push(...files);
-    } else {
-      args.push(".");
-    }
-
-    const result = await execCommand(eslintPath, args, { cwd });
-
-    // ESLint outputs JSON to stdout
-    const results = parseESLintOutput(result.stdout, cwd);
-
-    return {
-      source: "eslint",
-      results,
-      success: results.filter((r) => r.severity === "error").length === 0,
-    };
+    return interpretESLintRun(execResult, cwd, ["eslint", ...args].join(" "));
   },
 };

@@ -1,20 +1,27 @@
-import { loadConfig, getEffectivePatterns } from "./config-loader";
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
+import { UsageError } from "../utils/args";
+import { loadConfigWithDiagnostics, getEffectivePatterns } from "./config-loader";
 import { runAllTools } from "./runners";
-import { runAllRules } from "./rules";
+import { runAllRules, summarizeRules } from "./rules";
 import { format, type OutputFormat } from "./formatters";
-import type { CheckOptions, CheckResult, CheckSummary, ChaperoneConfig } from "./types";
-import { globSync } from "../utils/glob";
+import type { CheckOptions, CheckResult, CheckSummary } from "./types";
+import { createRuleContext } from "./rules/utils/rule-context";
+import type { FileIndex } from "../utils/file-index";
+import { changedFilesSince } from "../utils/git";
 
 export * from "./types";
 export * from "./config-loader";
+export { formatDiagnostic, validateRule, RULE_TYPES, REMOVED_RULE_TYPES } from "./config-schema";
 export { runAllTools } from "./runners";
 export { runAllRules } from "./rules";
 export { format, formatText, formatJson, formatAI } from "./formatters";
 
 /**
- * Progress callback for reporting check progress
+ * Progress callback for reporting check progress.
+ * Steps can overlap: tool runners and custom rules run concurrently.
  */
-export type ProgressCallback = (step: string, status: "start" | "done" | "skipped") => void;
+export type ProgressCallback = (step: string, status: "start" | "done" | "skipped" | "failed") => void;
 
 /**
  * Debug callback for detailed output
@@ -31,66 +38,72 @@ export interface CheckOptionsWithProgress extends CheckOptions {
 
 /**
  * Main check function - orchestrates all checks
+ *
+ * @throws {ConfigError} when the configuration is invalid
  */
 export async function check(options: CheckOptionsWithProgress): Promise<CheckSummary> {
   const startTime = Date.now();
-  const { cwd, configPath, fix, include, exclude, onProgress, onDebug } = options;
+  const { configPath, fix, include, exclude, since, onProgress, onDebug } = options;
+  const cwd = resolve(options.cwd);
+  if (!isDirectory(cwd)) {
+    throw new UsageError(`directory not found: ${cwd}`);
+  }
 
-  // Load configuration
+  // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
-  const config = loadConfig(cwd, configPath);
+  const { config, diagnostics, disabledRules } = loadConfigWithDiagnostics(cwd, configPath);
   onProgress?.("Loading configuration", "done");
 
   // Get effective include/exclude patterns
   const patterns = getEffectivePatterns(config, include, exclude);
 
-  // Count total files to check
+  // --since: limit file-scoped rules to changed files (throws GitError on a bad ref)
+  const changedFiles = since ? await changedFilesSince(cwd, since) : undefined;
+
+  // Walk the tree once; every rule shares this index and its content cache
   onProgress?.("Scanning files", "start");
-  const allFiles = countFilesToCheck(cwd, patterns.include, patterns.exclude);
+  const context = createRuleContext(cwd, patterns.exclude, {
+    useTsconfigPaths: config.integrations?.useTypescriptPaths !== false,
+    changedFiles,
+  });
+  const totalFiles = countFilesToCheck(context.index, patterns.include, changedFiles);
   onProgress?.("Scanning files", "done");
 
-  // Run TypeScript
-  onProgress?.("Running TypeScript", "start");
-  const toolResults = await runAllTools(config, {
+  // Start the tool runners; they run concurrently with each other and with the file
+  // rules. With --fix they run one after another (fixers rewrite the same files) and
+  // the rules wait for them.
+  const toolsPromise = runAllTools(config, {
     cwd,
     fix,
+    sequential: fix,
+    onRunner: (runner, status) => onProgress?.(runner.label, status),
   });
-
-  // Report tool results
-  if (toolResults.bySource.typescript?.skipped) {
-    onProgress?.("Running TypeScript", "skipped");
-  } else {
-    onProgress?.("Running TypeScript", "done");
+  if (fix) {
+    await toolsPromise;
   }
 
-  if (toolResults.bySource.eslint?.skipped) {
-    onProgress?.("Running ESLint", "skipped");
-  } else {
-    onProgress?.("Running ESLint", "start");
-    onProgress?.("Running ESLint", "done");
-  }
-
-  if (toolResults.bySource.prettier?.skipped) {
-    onProgress?.("Running Prettier", "skipped");
-  } else {
-    onProgress?.("Running Prettier", "start");
-    onProgress?.("Running Prettier", "done");
-  }
-
-  // Run all custom rules
-  onProgress?.("Checking custom rules", "start");
+  const customRules = config.rules?.custom ?? [];
+  const rulesStep = `Custom rules (${customRules.length})`;
+  onProgress?.(rulesStep, customRules.length === 0 ? "skipped" : "start");
   const ruleResults = await runAllRules(config, {
     cwd,
     include: patterns.include,
     exclude: patterns.exclude,
     onDebug,
+    context,
+    waitBeforeCommands: toolsPromise,
   });
+  if (customRules.length > 0) {
+    onProgress?.(rulesStep, "done");
+  }
 
-  const customRulesCount = config.rules?.custom?.length ?? 0;
-  if (customRulesCount === 0) {
-    onProgress?.("Checking custom rules", "skipped");
-  } else {
-    onProgress?.("Checking custom rules", "done");
+  const toolResults = await toolsPromise;
+  for (const runner of toolResults.summaries) {
+    onDebug?.(
+      `Tool ${runner.name}: ${runner.status}${runner.reason ? ` (${runner.reason})` : ""}${
+        runner.durationMs !== undefined ? ` in ${runner.durationMs}ms` : ""
+      }`
+    );
   }
 
   // Combine results
@@ -101,13 +114,19 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   const totalWarnings = allResults.filter((r) => r.severity === "warning").length;
 
   const summary: CheckSummary = {
-    totalFiles: allFiles,
+    totalFiles,
     totalErrors,
     totalWarnings,
     duration: Date.now() - startTime,
     success: totalErrors === 0,
     results: allResults,
     bySource: groupBySource(allResults),
+    diagnostics,
+    runners: toolResults.summaries,
+    rules: summarizeRules(customRules, ruleResults.byRule),
+    disabledRules,
+    since: since && changedFiles ? { ref: since, changedFiles: changedFiles.size } : undefined,
+    unreadable: context.index.unreadable(),
   };
 
   return summary;
@@ -124,25 +143,35 @@ export async function checkAndFormat(options: CheckOptionsWithProgress): Promise
   const output = format(summary, options.format as OutputFormat, {
     quiet: options.quiet,
     noWarnings: options.noWarnings,
+    color: options.color,
   });
 
   return { summary, output };
 }
 
 /**
- * Count files that will be checked
+ * Count indexed files matched by the include patterns (only changed ones with --since)
  */
-function countFilesToCheck(cwd: string, include: string[], exclude: string[]): number {
+function countFilesToCheck(index: FileIndex, include: string[], changedFiles?: ReadonlySet<string>): number {
   const allFiles = new Set<string>();
 
   for (const pattern of include) {
-    const files = globSync(pattern, { cwd, ignore: exclude });
-    for (const file of files) {
-      allFiles.add(file);
+    for (const file of index.glob(pattern)) {
+      if (!changedFiles || changedFiles.has(file)) {
+        allFiles.add(file);
+      }
     }
   }
 
   return allFiles.size;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**

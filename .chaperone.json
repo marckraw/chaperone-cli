@@ -120,6 +120,7 @@
         "id": "module-boundaries",
         "type": "import-boundary",
         "severity": "error",
+        "exclude": ["**/*.test.ts"],
         "layers": {
           "utils": {
             "files": "src/utils/**/*.ts",
@@ -133,13 +134,13 @@
             "files": "src/check/types.ts",
             "allowImportsFrom": []
           },
-          "check-rule-types": {
-            "files": "src/check/rules/types.ts",
-            "allowImportsFrom": ["check-types"]
-          },
           "check-rules": {
             "files": "src/check/rules/*.ts",
             "allowImportsFrom": ["utils", "check-types", "check-rule-types"]
+          },
+          "check-rule-types": {
+            "files": "src/check/rules/types.ts",
+            "allowImportsFrom": ["utils", "check-types"]
           },
           "check-runners": {
             "files": "src/check/runners/*.ts",
@@ -161,7 +162,12 @@
         "type": "file-contract",
         "severity": "error",
         "files": "src/check/rules/*.ts",
-        "exclude": ["src/check/rules/index.ts", "src/check/rules/types.ts", "src/check/rules/ai-instructions.ts"],
+        "exclude": [
+          "src/check/rules/index.ts",
+          "src/check/rules/types.ts",
+          "src/check/rules/ai-instructions.ts",
+          "**/*.test.ts"
+        ],
         "assertions": {
           "mustBeModule": true,
           "mustExportNamed": true

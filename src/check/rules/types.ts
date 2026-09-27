@@ -1,4 +1,6 @@
 import type { CheckResult, CustomRule } from "../types";
+import type { FileIndex } from "../../utils/file-index";
+import type { ImportEntry } from "./utils/import-extractor";
 
 /**
  * Debug callback for reporting rule execution
@@ -6,13 +8,43 @@ import type { CheckResult, CustomRule } from "../types";
 export type DebugCallback = (message: string) => void;
 
 /**
+ * Shared, per-run state for rules: one file walk, one content cache.
+ */
+export interface RuleContext {
+  readonly cwd: string;
+  /** Every file that survived the global excludes, plus a lazy content cache */
+  readonly index: FileIndex;
+  /** Every module reference in a file (cached; unfiltered) */
+  imports(file: string): ImportEntry[];
+  /**
+   * Resolve a specifier imported by `fromFile` to an indexed file: relative paths,
+   * directory index files, .js → .ts, and tsconfig `paths`/`baseUrl` aliases.
+   * Null for packages and anything outside the index.
+   */
+  resolveImport(specifier: string, fromFile: string): string | null;
+  /**
+   * The files a rule should examine: all of `files`, or only the changed ones when the
+   * run is limited with `--since`. Rules still report the full glob count as filesChecked.
+   */
+  inScope(files: readonly string[]): string[];
+}
+
+/**
  * Options for running custom rules
  */
 export interface RuleRunnerOptions {
   cwd: string;
   include: string[];
+  /** Global exclude patterns (already merged with the defaults) */
   exclude: string[];
   onDebug?: DebugCallback;
+  /** Shared run state. Created on demand from cwd/exclude when omitted. */
+  context?: RuleContext;
+  /**
+   * Command rules wait for this (the tool runners) before they start, since a command
+   * may write files while the tools read them.
+   */
+  waitBeforeCommands?: Promise<unknown>;
 }
 
 /**
@@ -21,6 +53,13 @@ export interface RuleRunnerOptions {
 export interface RuleResult {
   ruleId: string;
   results: CheckResult[];
+  /**
+   * How many files the rule's own globs selected (after excludes).
+   * Undefined for rules that do not scan files (package-fields, command).
+   */
+  filesChecked?: number;
+  /** Non-violation notices about the rule's scope, e.g. a glob that matched no files */
+  notices?: string[];
 }
 
 /**

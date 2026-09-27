@@ -1,4 +1,6 @@
-import type { AIInstructionFile, ChaperoneConfig, CustomRule } from "../check/types";
+import type { AIInstructionFile, CustomRule } from "../check/types";
+import type { SkippedRule } from "./config-merger";
+import type { ExtractRulesOptions } from "./llm-client";
 
 /**
  * Options for the analyze command
@@ -10,6 +12,8 @@ export interface AnalyzeOptions {
   force?: boolean;
   verbose?: boolean;
   apiKey?: string;
+  /** Rule extraction (default: Claude via the Anthropic API); injectable for tests */
+  extract?: (files: AIInstructionFile[], options: ExtractRulesOptions) => Promise<ExtractionResponse>;
 }
 
 /**
@@ -19,10 +23,15 @@ export interface AnalyzeResult {
   success: boolean;
   extractedRules: CustomRule[];
   addedRules: CustomRule[];
-  skippedRules: CustomRule[];
+  /** Valid rules that were not added, with the reason */
+  skippedRules: SkippedRule[];
   skippedInstructions: SkippedInstruction[];
   summary: string;
   aiFiles: AIInstructionFile[];
+  /** The config file analyze reads and patches */
+  configPath?: string;
+  /** Whether the config file was written */
+  written?: boolean;
 }
 
 /**
@@ -37,7 +46,7 @@ export interface SkippedInstruction {
  * Response from LLM extraction
  */
 export interface ExtractionResponse {
-  rules: CustomRule[];
+  rules: unknown[];
   summary: string;
   skipped?: SkippedInstruction[];
 }

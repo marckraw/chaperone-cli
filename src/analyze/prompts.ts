@@ -11,7 +11,8 @@ Convert natural language coding guidelines into structured rules that can be che
 
 ## Available Rule Types
 
-You can create six types of rules:
+You can create exactly these seven types of rules (other Chaperone rule types exist but
+are configured by hand, so never emit them):
 
 ### 1. "regex" - Pattern Matching Rules
 
@@ -30,6 +31,10 @@ Use for patterns that should or should not appear in code.
 
 **Optional fields:**
 - reportOnce: true to only report first match per file (useful for file-level rules)
+- flags: RegExp flags. Default "m", so ^ and $ match at the start and end of every line.
+  Use "" when ^ must mean the start of the file, or add "i" for case-insensitive matching.
+
+A pattern must never be able to match an empty string (for example, no trailing "|").
 
 **Forbidden patterns (mustMatch: false):**
 - "Don't use console.log" → pattern: "console\\.log\\("
@@ -38,7 +43,7 @@ Use for patterns that should or should not appear in code.
 
 **Required patterns (mustMatch: true):**
 - "Always use 'use strict'" → pattern: "'use strict'", mustMatch: true
-- "Must have copyright header" → pattern: "^/\\*\\*.*Copyright", mustMatch: true
+- "Must have copyright header" → pattern: "^/\\*\\*.*Copyright", mustMatch: true, flags: "" (^ = start of file)
 
 **File-level rules (reportOnce: true):**
 Use reportOnce when you care about whether a file matches, not how many times:
@@ -66,7 +71,25 @@ Use for file naming conventions and required companion files.
 - "Every .tsx component needs a .test.tsx file" → files: "src/**/*.tsx", pair: { from: "\\.tsx$", to: ".test.tsx" }
 - "Every .pure.ts file needs a .pure.test.ts file" → files: "src/**/*.pure.ts", pair: { from: "\\.pure\\.ts$", to: ".pure.test.ts" }
 
-### 3. "package-fields" - Package.json Validation Rules
+### 3. "file-contract" - Per-file Content Contracts
+
+Use when every file matching a glob must (or must not) contain certain patterns, or must
+satisfy structural assertions.
+
+**Required fields:**
+- type: "file-contract"
+- id, severity, source, originalText
+- files: glob pattern for files to check
+- at least one of: requiredPatterns, requiredAnyPatterns, forbiddenPatterns (arrays of regex strings) or assertions
+
+**Assertions (optional object):** firstLine (regex), mustExportDefault, mustExportNamed,
+mustImport / mustNotImport (module names, * wildcard), maxLines, minLines, mustHaveJSDoc,
+maxExports, mustBeModule
+
+**Example:**
+- "Presentational components must not use useEffect" → files: "src/**/*.presentational.tsx", forbiddenPatterns: ["\\buseEffect\\s*\\("]
+
+### 4. "package-fields" - Package.json Validation Rules
 
 Use to ensure package.json has required fields or doesn't have forbidden fields.
 
@@ -86,7 +109,7 @@ Use to ensure package.json has required fields or doesn't have forbidden fields.
 - "Package must have build and test scripts" → requiredFields: ["scripts.build", "scripts.test"]
 - "Don't include devDependencies in production" → forbiddenFields: ["bundledDependencies"]
 
-### 4. "component-location" - Component Organization Rules
+### 5. "component-location" - Component Organization Rules
 
 Use to ensure certain types of components are in specific folders.
 
@@ -110,7 +133,7 @@ Use to ensure certain types of components are in specific folders.
 - "Presentational components should be in src/components/ui/" → componentType: "presentational", requiredLocation: "src/components/ui/", mustBeIn: true
 - "Container components should not be in the ui folder" → componentType: "stateful", requiredLocation: "src/components/ui/", mustBeIn: false
 
-### 5. "command" - Command-based Deterministic Checks
+### 6. "command" - Command-based Deterministic Checks
 
 Use for invariants that are best validated by running a command.
 
@@ -131,7 +154,7 @@ Use for invariants that are best validated by running a command.
 - stderrPattern: regex that stderr must match
 - message: custom error message
 
-### 6. "symbol-reference" - Export Reference Coverage
+### 7. "symbol-reference" - Export Reference Coverage
 
 Use to require exported symbols from source files to be referenced in target files (for example, exported pure functions referenced in unit tests).
 
@@ -161,6 +184,7 @@ All rules support these optional fields:
 
 1. **Choose the right rule type:**
    - Use "regex" for content patterns (forbidden/required code)
+   - Use "file-contract" for per-file contracts (several required/forbidden patterns, line limits)
    - Use "file-pairing" for file companion conventions
    - Use "package-fields" for package.json invariants
    - Use "component-location" for presentational/stateful folder boundaries
@@ -286,7 +310,8 @@ ${fileContents}
 Extract all coding conventions, forbidden patterns, required patterns, and file or symbol reference rules that can be checked programmatically.
 
 For each rule:
-- Choose the appropriate type among: "regex", "file-pairing", "package-fields", "component-location", "command", "symbol-reference"
+- Choose the appropriate type among: "regex", "file-contract", "file-pairing", "package-fields", "component-location", "command", "symbol-reference"
+- Always set "severity" to "error" or "warning"
 - Provide a unique kebab-case ID
 - ALWAYS include "source" (the filename) and "originalText" (the verbatim instruction) for traceability
 

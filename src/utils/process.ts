@@ -3,11 +3,18 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export interface ExecResult {
   stdout: string;
   stderr: string;
+  /** Exit code; 124 when the command timed out, 127 when it could not be started */
   exitCode: number;
+  /** True when the command was killed after exceeding the timeout */
+  timedOut?: boolean;
+  /** Set when the command could not be started at all (e.g. ENOENT) */
+  spawnError?: string;
 }
 
 export interface ExecOptions {
@@ -26,11 +33,13 @@ export function execCommand(
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     const { cwd = process.cwd(), timeout = 120000, env } = options;
+    let settled = false;
 
     const child = spawn(command, args, {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
@@ -42,29 +51,35 @@ export function execCommand(
       child.kill("SIGTERM");
     }, timeout);
 
-    child.stdout.on("data", (data: Buffer) => {
+    child.stdout?.on("data", (data: Buffer) => {
       stdout += data.toString();
     });
 
-    child.stderr.on("data", (data: Buffer) => {
+    child.stderr?.on("data", (data: Buffer) => {
       stderr += data.toString();
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       resolve({
         stdout,
         stderr,
         exitCode: killed ? 124 : code ?? 1,
+        timedOut: killed || undefined,
       });
     });
 
     child.on("error", (err) => {
       clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       resolve({
         stdout,
         stderr: stderr || err.message,
-        exitCode: 1,
+        exitCode: 127,
+        spawnError: err.message,
       });
     });
   });
@@ -74,28 +89,35 @@ export function execCommand(
  * Check if a command exists in PATH
  */
 export async function commandExists(command: string): Promise<boolean> {
-  const result = await execCommand("which", [command]);
-  return result.exitCode === 0;
+  return Bun.which(command) !== null;
+}
+
+/**
+ * Find an npm binary: `node_modules/.bin/<name>` in `cwd` or any parent directory
+ * (monorepos hoist tools to the root), then the PATH. Returns null when not found.
+ */
+export function findBinary(name: string, cwd: string): string | null {
+  const candidates = process.platform === "win32" ? [`${name}.cmd`, `${name}.exe`, name] : [name];
+  let directory = cwd;
+
+  for (;;) {
+    for (const candidate of candidates) {
+      const localPath = join(directory, "node_modules", ".bin", candidate);
+      if (existsSync(localPath)) {
+        return localPath;
+      }
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  return Bun.which(name);
 }
 
 /**
  * Find the binary path
  */
-export async function findNpmBinary(
-  name: string,
-  cwd: string
-): Promise<string | null> {
-  // Try local node_modules first
-  const localPath = `${cwd}/node_modules/.bin/${name}`;
-  const checkLocal = await execCommand("test", ["-x", localPath]);
-  if (checkLocal.exitCode === 0) {
-    return localPath;
-  }
-
-  // Fall back to global
-  if (await commandExists(name)) {
-    return name;
-  }
-
-  return null;
+export async function findNpmBinary(name: string, cwd: string): Promise<string | null> {
+  return findBinary(name, cwd);
 }

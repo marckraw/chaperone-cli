@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { execCommand } from "../../utils/process";
 import type { CheckResult, CommandRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 
@@ -43,26 +43,25 @@ export async function runCommandRule(
   const cwd = rule.cwd ? resolve(options.cwd, rule.cwd) : options.cwd;
   const timeoutMs = rule.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  const processResult = spawnSync(rule.command, args, {
-    cwd,
-    timeout: timeoutMs,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: false,
-  });
+  // Asynchronous so tool runners keep streaming while the command runs
+  const processResult = await execCommand(rule.command, args, { cwd, timeout: timeoutMs });
 
   const commandDisplay = [rule.command, ...args].join(" ").trim();
-  const stdout = processResult.stdout ?? "";
-  const stderr = processResult.stderr ?? "";
-  const exitCode = processResult.status ?? -1;
+  const { stdout, stderr } = processResult;
+  const exitCode = processResult.exitCode;
   const commandOutput = formatCommandOutput(stdout, stderr);
-  const hasExecutionFailure = Boolean(processResult.error) && processResult.status === null;
+  const failureReason = processResult.spawnError
+    ? processResult.spawnError
+    : processResult.timedOut
+      ? `timed out after ${timeoutMs}ms`
+      : null;
 
-  if (hasExecutionFailure) {
+  if (failureReason) {
     results.push({
       file: RESULT_FILE,
       rule: `command/${rule.id}`,
-      message: rule.message || `Failed to execute command: ${processResult.error.message}`,
+      // An execution failure is not a rule verdict: always say what went wrong.
+      message: `Failed to execute command "${commandDisplay}": ${failureReason}`,
       severity: rule.severity,
       source: "custom",
       context: {

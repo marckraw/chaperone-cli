@@ -125,3 +125,108 @@ describe("runReactComponentCountRule", () => {
     expect(result.results[0]?.context?.actualValue).toContain("ButtonIcon");
   });
 });
+
+describe("runReactComponentCountRule: component detection", () => {
+  const RULE = {
+    type: "react-component-count" as const,
+    id: "single-react-component",
+    severity: "error" as const,
+    files: "src/**/*.{tsx,jsx}",
+    maxComponents: 1,
+  };
+
+  async function componentsIn(source: string): Promise<string[]> {
+    const cwd = makeProject({ "src/file.tsx": source });
+    const result = await runReactComponentCountRule({ ...RULE, maxComponents: 99 }, {
+      cwd,
+      include: [],
+      exclude: [],
+    });
+    expect(result.results).toEqual([]);
+    const strict = await runReactComponentCountRule({ ...RULE, maxComponents: 1 }, { cwd, include: [], exclude: [] });
+    return (strict.results[0]?.context?.detectedPatterns as string[] | undefined) ?? [];
+  }
+
+  test("destructured props are not mistaken for the component body", async () => {
+    const cwd = makeProject({
+      "src/card.tsx": `export function Card({ title }: { title: string }) {\n  return <div>{title}</div>;\n}\n\nfunction CardHeader({ title }) {\n  return <h2>{title}</h2>;\n}\n`,
+    });
+
+    const result = await runReactComponentCountRule(RULE, { cwd, include: [], exclude: [] });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.line).toBe(5);
+    expect(result.results[0]?.context?.actualValue).toBe("2: Card, CardHeader");
+  });
+
+  test("handles return type annotations, default exports and JSX text with apostrophes", async () => {
+    expect(
+      await componentsIn(
+        `export default function ({ a }: Props): JSX.Element {\n  return <p>Don't {a}</p>;\n}\nfunction Second(): { node: unknown } | null {\n  return null;\n}\nfunction Third(props: Props): React.ReactNode {\n  return <span>it's "fine"</span>;\n}\n`
+      )
+    ).toEqual(["default export", "Third"]);
+  });
+
+  test("counts class components, arrows and memo/forwardRef wrappers, but not nested helpers", async () => {
+    expect(
+      await componentsIn(
+        `class Legacy extends React.Component {\n  render() { return <div />; }\n}\n` +
+          `export const Arrow = ({ x }: Props) => <span>{x}</span>;\n` +
+          `const Generic = <T,>({ items }: { items: T[] }) => <ul>{items.length}</ul>;\n` +
+          `const Wrapped = memo(function Wrapped() { return <b />; });\n` +
+          `export function Parent() {\n  function Nested() { return <i />; }\n  const Inner = () => <em />;\n  return <Nested />;\n}\n`
+      )
+    ).toEqual(["Legacy", "Arrow", "Generic", "Wrapped", "Parent"]);
+  });
+
+  test("ignores constants and functions that do not render", async () => {
+    expect(
+      await componentsIn(
+        `const Title = "x"\nconst Config = { a: 1 }\nexport function Compute(a: number) {\n  return a < 2 ? a : 2;\n}\nexport function Only() {\n  return <div />;\n}\n`
+      )
+    ).toEqual([]);
+  });
+});
+
+describe("runReactComponentCountRule: generic wrappers", () => {
+  test("counts forwardRef components with multi-argument generics", async () => {
+    const cwd = makeProject({
+      "src/menu.tsx": [
+        "const MenuContent = React.forwardRef<",
+        "  React.ComponentRef<typeof Primitive.Content>,",
+        "  React.ComponentPropsWithoutRef<typeof Primitive.Content>",
+        ">(({ className, ...props }, ref) => <Primitive.Content ref={ref} {...props} />)",
+        "MenuContent.displayName = 'MenuContent'",
+        "",
+        "const MenuItem = React.forwardRef<HTMLDivElement, Props>((props, ref) => <div ref={ref} />)",
+        "const Menu = Primitive.Root",
+        "",
+      ].join("\n"),
+    });
+    const result = await runReactComponentCountRule(
+      { type: "react-component-count", id: "one", severity: "error", files: "src/**/*.tsx" },
+      { cwd, include: [], exclude: [] }
+    );
+    expect(result.results[0]?.context?.actualValue).toBe("2: MenuContent, MenuItem");
+  });
+});
+
+describe("runReactComponentCountRule: default exports and generic classes", () => {
+  test("counts default-exported arrows and wrappers, and generic class components", async () => {
+    const cwd = makeProject({
+      "src/a.tsx": "export function Named() { return <b />; }\nexport default () => <p />;\n",
+      "src/b.tsx": "export function Named() { return <b />; }\nexport default forwardRef(function Input(props, ref) { return <input ref={ref} />; });\n",
+      "src/c.tsx": "export function Named() { return <b />; }\nclass C extends React.Component<{ t: string }> {\n  render() { return <div>{this.props.t}</div>; }\n}\n",
+      "src/d.tsx": "export function Named() { return <b />; }\nexport default memo(Named);\n",
+    });
+    const result = await runReactComponentCountRule(
+      { type: "react-component-count", id: "one", severity: "error", files: "src/**/*.tsx" },
+      { cwd, include: [], exclude: [] }
+    );
+    expect(result.results.map((entry) => [entry.file, entry.context?.actualValue])).toEqual([
+      ["src/a.tsx", "2: Named, default export"],
+      ["src/b.tsx", "2: Named, default export"],
+      ["src/c.tsx", "2: Named, C"],
+    ]);
+  });
+});

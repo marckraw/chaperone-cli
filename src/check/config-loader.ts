@@ -1,402 +1,429 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
-import { ChaperoneConfig, CustomRule, DEFAULT_CONFIG } from "./types";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { getBuiltInPreset, listBuiltInPresets } from "../presets";
-import type { ChaperonePreset } from "../presets";
+import {
+  formatDiagnostic,
+  formatPath,
+  validateConfigShape,
+  validateRule,
+} from "./config-schema";
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_EXCLUDE,
+  type ChaperoneConfig,
+  type ConfigDiagnostic,
+  type CustomRule,
+  type RulesConfig,
+  type ToolConfig,
+} from "./types";
 
 const CONFIG_FILENAME = ".chaperone.json";
 
 /**
- * Resolve extends specifiers to preset configs, then merge into a base config.
- * Supports:
- *   - "chaperone/<name>" → built-in preset
- *   - "./<path>" or "../<path>" → local JSON file relative to configDir
+ * Thrown when the configuration cannot be used. Carries every diagnostic found,
+ * so users can fix all problems in one pass. The CLI maps it to exit code 2.
  */
-function resolveExtends(
-  specifiers: string[],
-  configDir: string,
-  ancestry: Set<string> = new Set()
-): Partial<ChaperoneConfig>[] {
-  const resolved: Partial<ChaperoneConfig>[] = [];
+export class ConfigError extends Error {
+  readonly diagnostics: ConfigDiagnostic[];
 
-  for (const specifier of specifiers) {
-    if (ancestry.has(specifier)) {
-      throw new Error(`Circular preset dependency detected: ${specifier}`);
-    }
-
-    const newAncestry = new Set(ancestry);
-    newAncestry.add(specifier);
-
-    let preset: ChaperonePreset | Partial<ChaperoneConfig> | null = null;
-
-    if (specifier.startsWith("chaperone/")) {
-      const name = specifier.slice("chaperone/".length);
-      preset = getBuiltInPreset(name);
-      if (!preset) {
-        throw new Error(`Unknown built-in preset: ${specifier}. Available presets: ${listBuiltInPresets().join(", ")}`);
-      }
-    } else if (specifier.startsWith("./") || specifier.startsWith("../")) {
-      const presetPath = resolve(configDir, specifier);
-      if (!existsSync(presetPath)) {
-        throw new Error(`Preset file not found: ${presetPath}`);
-      }
-      try {
-        const content = readFileSync(presetPath, "utf-8");
-        preset = JSON.parse(content);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to load preset from ${presetPath}: ${message}`);
-      }
-    } else {
-      throw new Error(`Unsupported preset specifier: "${specifier}". Use "chaperone/<name>" for built-in presets or "./<path>" for local files.`);
-    }
-
-    if (!preset) continue;
-
-    // Recursively resolve nested extends
-    const nestedExtends = (preset as ChaperonePreset).extends ?? (preset as Partial<ChaperoneConfig>).extends;
-    if (nestedExtends && nestedExtends.length > 0) {
-      const nestedResolved = resolveExtends(nestedExtends, configDir, newAncestry);
-      resolved.push(...nestedResolved);
-    }
-
-    // Convert preset to partial config shape
-    const partialConfig: Partial<ChaperoneConfig> = {
-      rules: (preset as ChaperonePreset).rules ?? (preset as Partial<ChaperoneConfig>).rules,
-      include: (preset as ChaperonePreset).include ?? (preset as Partial<ChaperoneConfig>).include,
-      exclude: (preset as ChaperonePreset).exclude ?? (preset as Partial<ChaperoneConfig>).exclude,
-      integrations: (preset as ChaperonePreset).integrations ?? (preset as Partial<ChaperoneConfig>).integrations,
-    };
-
-    resolved.push(partialConfig);
+  constructor(diagnostics: ConfigDiagnostic[]) {
+    const errors = diagnostics.filter((diagnostic) => diagnostic.level === "error");
+    super(
+      errors.length === 1
+        ? `Invalid configuration: ${formatDiagnostic(errors[0]!)}`
+        : `Invalid configuration (${errors.length} errors):\n${errors
+            .map((diagnostic) => `  - ${formatDiagnostic(diagnostic)}`)
+            .join("\n")}`
+    );
+    this.name = "ConfigError";
+    this.diagnostics = diagnostics;
   }
-
-  return resolved;
 }
 
 /**
- * Merge custom rules arrays: append + deduplicate by id (later wins).
- * Rules with disabled: true are filtered out.
+ * The result of loading a configuration.
  */
-function mergeCustomRules(
-  base: CustomRule[],
-  override: CustomRule[]
-): CustomRule[] {
-  const byId = new Map<string, CustomRule>();
-
-  for (const rule of base) {
-    byId.set(rule.id, rule);
-  }
-
-  for (const rule of override) {
-    byId.set(rule.id, rule);
-  }
-
-  // Filter out disabled rules
-  return Array.from(byId.values()).filter((rule) => !rule.disabled);
+export interface LoadedConfig {
+  /** Merged configuration: defaults → presets (in order) → user config. Disabled rules removed. */
+  config: ChaperoneConfig;
+  /** Warnings found while loading (errors throw {@link ConfigError}) */
+  diagnostics: ConfigDiagnostic[];
+  /** Rules switched off with `disabled: true` */
+  disabledRules: Array<{ id: string; source: string }>;
+  /** Absolute path of the user's config file, or null when running with defaults */
+  configPath: string | null;
 }
 
 /**
- * Load chaperone configuration from file
+ * One config layer: a preset or the user's file, already validated.
  */
-export function loadConfig(cwd: string, configPath?: string): ChaperoneConfig {
-  const resolvedPath = configPath ? resolve(cwd, configPath) : join(cwd, CONFIG_FILENAME);
-  const isExplicitPath = !!configPath;
+interface ConfigSource {
+  label: string;
+  config: Partial<ChaperoneConfig>;
+  rules: CustomRule[];
+}
 
-  if (!existsSync(resolvedPath)) {
-    if (isExplicitPath) {
-      // Error if user explicitly specified a config that doesn't exist
-      throw new Error(`Config file not found: ${resolvedPath}`);
-    }
-    // Return default config if no config file exists
-    return { ...DEFAULT_CONFIG };
+interface LoadState {
+  cwd: string;
+  diagnostics: ConfigDiagnostic[];
+  sources: ConfigSource[];
+  /** Rule ids defined by sources loaded so far (used for override hints) */
+  knownIds: Set<string>;
+  /** Presets already loaded (built-in names and absolute paths): each is applied once */
+  loadedPresets: Set<string>;
+}
+
+function displayPath(cwd: string, absolutePath: string): string {
+  const relativePath = relative(cwd, absolutePath);
+  return relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath)
+    ? relativePath
+    : absolutePath;
+}
+
+function parseJsonFile(absolutePath: string, label: string, state: LoadState): unknown {
+  let text: string;
+  try {
+    text = readFileSync(absolutePath, "utf-8");
+  } catch (error) {
+    state.diagnostics.push({
+      level: "error",
+      source: label,
+      message: `cannot read file: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return undefined;
   }
 
   try {
-    const content = readFileSync(resolvedPath, "utf-8");
-    const parsed = JSON.parse(content) as Partial<ChaperoneConfig>;
-    const configDir = dirname(resolvedPath);
+    return JSON.parse(text);
+  } catch (error) {
+    state.diagnostics.push({
+      level: "error",
+      source: label,
+      message: `invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return undefined;
+  }
+}
 
-    // Resolve extends chain
-    if (parsed.extends && parsed.extends.length > 0) {
-      const presetConfigs = resolveExtends(parsed.extends, configDir);
+/**
+ * Validate a raw config object and register it (and its extends chain) as sources.
+ * Presets are registered before the config that extends them.
+ */
+function addSource(
+  raw: unknown,
+  label: string,
+  baseDir: string | null,
+  ancestry: string[],
+  state: LoadState
+): void {
+  state.diagnostics.push(...validateConfigShape(raw, label));
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return;
+  }
 
-      // Build merged config: DEFAULT → preset1 → preset2 → ... → user config
-      let merged = { ...DEFAULT_CONFIG };
-      for (const presetConfig of presetConfigs) {
-        merged = mergeConfigWithCustomRuleMerge(merged, presetConfig);
+  const config = raw as Partial<ChaperoneConfig> & { extends?: string | string[] };
+  const extendsList =
+    typeof config.extends === "string"
+      ? [config.extends]
+      : Array.isArray(config.extends)
+        ? config.extends
+        : [];
+
+  extendsList.forEach((specifier, index) => {
+    if (typeof specifier === "string") {
+      resolveExtends(specifier, label, `extends[${index}]`, baseDir, ancestry, state);
+    }
+  });
+
+  const rules: CustomRule[] = [];
+  const customRules = config.rules?.custom;
+  if (Array.isArray(customRules)) {
+    const seenInSource = new Set<string>();
+    customRules.forEach((entry, index) => {
+      const path = ["rules", "custom", index];
+      const validation = validateRule(entry, label, path);
+      state.diagnostics.push(...validation.diagnostics);
+
+      const id =
+        typeof (entry as { id?: unknown } | null)?.id === "string" ? (entry as { id: string }).id : null;
+      const hasErrors = validation.diagnostics.some((diagnostic) => diagnostic.level === "error");
+      if (id && hasErrors && state.knownIds.has(id)) {
+        state.diagnostics.push({
+          level: "error",
+          source: label,
+          path: formatPath(path),
+          ruleId: id,
+          message:
+            "this entry overrides an inherited rule with the same id. Overrides replace the whole rule: " +
+            'copy every field you want to keep, or set "disabled": true to switch the inherited rule off',
+        });
       }
-      merged = mergeConfigWithCustomRuleMerge(merged, parsed);
-      return merged;
+      if (id && seenInSource.has(id)) {
+        state.diagnostics.push({
+          level: "warning",
+          source: label,
+          path: formatPath(path),
+          ruleId: id,
+          message: `duplicate rule id "${id}" in the same file; the later entry wins`,
+        });
+      }
+      if (id) seenInSource.add(id);
+      if (validation.rule) rules.push(validation.rule);
+    });
+  }
+
+  for (const rule of rules) {
+    state.knownIds.add(rule.id);
+  }
+  state.sources.push({ label, config, rules });
+}
+
+function resolveExtends(
+  specifier: string,
+  fromLabel: string,
+  path: string,
+  baseDir: string | null,
+  ancestry: string[],
+  state: LoadState
+): void {
+  const fail = (message: string) =>
+    state.diagnostics.push({ level: "error", source: fromLabel, path, message });
+
+  if (specifier.startsWith("chaperone/")) {
+    const name = specifier.slice("chaperone/".length);
+    const preset = getBuiltInPreset(name);
+    if (!preset) {
+      fail(
+        `unknown built-in preset "${specifier}". Available presets: ${listBuiltInPresets()
+          .map((preset) => `chaperone/${preset}`)
+          .join(", ")}`
+      );
+      return;
+    }
+    if (ancestry.includes(specifier)) {
+      fail(`circular preset dependency: ${[...ancestry, specifier].join(" → ")}`);
+      return;
+    }
+    // A preset reached through several `extends` paths is applied once, at its first
+    // position, so a later copy cannot undo overrides made in between.
+    if (state.loadedPresets.has(specifier)) return;
+    state.loadedPresets.add(specifier);
+    addSource(preset, specifier, null, [...ancestry, specifier], state);
+    return;
+  }
+
+  const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
+  if (!isRelative && !isAbsolute(specifier)) {
+    fail(
+      `unsupported preset specifier "${specifier}". Use "chaperone/<name>" for built-in presets or a path starting with "./" or "../" for local files`
+    );
+    return;
+  }
+
+  if (!baseDir) {
+    fail(`built-in presets cannot extend local files ("${specifier}")`);
+    return;
+  }
+
+  // Nested extends resolve relative to the file that declares them.
+  const absolutePath = resolve(baseDir, specifier);
+  const label = displayPath(state.cwd, absolutePath);
+  if (ancestry.includes(absolutePath)) {
+    fail(
+      `circular preset dependency: ${[...ancestry, absolutePath]
+        .map((entry) => displayPath(state.cwd, entry))
+        .join(" → ")}`
+    );
+    return;
+  }
+  if (!existsSync(absolutePath)) {
+    fail(`preset file not found: ${label}`);
+    return;
+  }
+  if (state.loadedPresets.has(absolutePath)) return;
+  state.loadedPresets.add(absolutePath);
+
+  const raw = parseJsonFile(absolutePath, label, state);
+  if (raw === undefined) return;
+  addSource(raw, label, dirname(absolutePath), [...ancestry, absolutePath], state);
+}
+
+function mergeToolConfig(base?: ToolConfig, override?: ToolConfig): ToolConfig | undefined {
+  if (!override) return base;
+  return { ...base, ...override };
+}
+
+/**
+ * Merge validated sources in order. Custom rules are appended and de-duplicated by id
+ * (later sources win); excludes accumulate; other fields are overridden.
+ * Rules marked `disabled: true` are removed, whether or not the config uses `extends`.
+ */
+function mergeSources(sources: ConfigSource[]): {
+  config: ChaperoneConfig;
+  disabledRules: Array<{ id: string; source: string }>;
+  finalRules: Map<string, { rule: CustomRule; source: string }>;
+} {
+  let config: ChaperoneConfig = {
+    ...DEFAULT_CONFIG,
+    rules: { ...DEFAULT_CONFIG.rules, custom: [] },
+    exclude: [],
+  };
+  const byId = new Map<string, { rule: CustomRule; source: string }>();
+  const exclude: string[] = [];
+
+  for (const source of sources) {
+    const partial = source.config;
+    const rules: RulesConfig = { ...config.rules };
+
+    if (partial.rules) {
+      rules.typescript = mergeToolConfig(rules.typescript, partial.rules.typescript);
+      rules.eslint = mergeToolConfig(rules.eslint, partial.rules.eslint);
+      rules.prettier = mergeToolConfig(rules.prettier, partial.rules.prettier);
     }
 
-    // Merge with defaults
-    return mergeConfig(DEFAULT_CONFIG, parsed);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to load config from ${resolvedPath}: ${message}`);
+    for (const rule of source.rules) {
+      byId.set(rule.id, { rule, source: source.label });
+    }
+
+    if (Array.isArray(partial.exclude)) {
+      exclude.push(...partial.exclude);
+    }
+
+    config = {
+      ...config,
+      version: partial.version ?? config.version,
+      project: partial.project ? { ...config.project, ...partial.project } : config.project,
+      rules,
+      include: Array.isArray(partial.include) ? partial.include : config.include,
+      integrations: partial.integrations
+        ? { ...config.integrations, ...partial.integrations }
+        : config.integrations,
+      aiInstructions: partial.aiInstructions
+        ? { ...DEFAULT_CONFIG.aiInstructions!, ...config.aiInstructions, ...partial.aiInstructions }
+        : config.aiInstructions,
+    };
   }
+
+  const disabledRules: Array<{ id: string; source: string }> = [];
+  const custom: CustomRule[] = [];
+  for (const [id, entry] of byId) {
+    if (entry.rule.disabled) {
+      disabledRules.push({ id, source: entry.source });
+    } else {
+      custom.push(entry.rule);
+    }
+  }
+
+  config.rules = { ...config.rules, custom };
+  config.exclude = [...new Set(exclude)];
+  delete config.extends;
+
+  return { config, disabledRules, finalRules: byId };
 }
 
 /**
- * Deep merge configuration objects
+ * Load, validate and merge the configuration.
+ *
+ * @throws {ConfigError} when any source has errors, listing every problem found.
  */
-function mergeConfig(
-  defaults: ChaperoneConfig,
-  overrides: Partial<ChaperoneConfig>
-): ChaperoneConfig {
-  const result = { ...defaults };
+export function loadConfigWithDiagnostics(cwd: string, configPath?: string): LoadedConfig {
+  const resolvedPath = configPath ? resolve(cwd, configPath) : join(cwd, CONFIG_FILENAME);
+  const state: LoadState = { cwd, diagnostics: [], sources: [], knownIds: new Set(), loadedPresets: new Set() };
 
-  if (overrides.version) {
-    result.version = overrides.version;
-  }
-
-  if (overrides.project) {
-    result.project = { ...defaults.project, ...overrides.project };
-  }
-
-  if (overrides.rules) {
-    result.rules = {
-      ...defaults.rules,
-      ...overrides.rules,
-      typescript: overrides.rules.typescript
-        ? { ...defaults.rules?.typescript, ...overrides.rules.typescript }
-        : defaults.rules?.typescript,
-      eslint: overrides.rules.eslint
-        ? { ...defaults.rules?.eslint, ...overrides.rules.eslint }
-        : defaults.rules?.eslint,
-      prettier: overrides.rules.prettier
-        ? { ...defaults.rules?.prettier, ...overrides.rules.prettier }
-        : defaults.rules?.prettier,
-      custom: overrides.rules.custom ?? defaults.rules?.custom,
+  if (!existsSync(resolvedPath)) {
+    if (configPath) {
+      throw new ConfigError([
+        { level: "error", source: configPath, message: `config file not found: ${resolvedPath}` },
+      ]);
+    }
+    const { config } = mergeSources([]);
+    return {
+      config,
+      diagnostics: [
+        {
+          level: "warning",
+          source: CONFIG_FILENAME,
+          message: `no ${CONFIG_FILENAME} found in ${cwd}; only the tool runners ran, with defaults (run "chaperone init" to create a config)`,
+        },
+      ],
+      disabledRules: [],
+      configPath: null,
     };
   }
 
-  if (overrides.include) {
-    result.include = overrides.include;
+  const label = displayPath(cwd, resolvedPath);
+  const raw = parseJsonFile(resolvedPath, label, state);
+  if (raw !== undefined) {
+    addSource(raw, label, dirname(resolvedPath), [resolvedPath], state);
   }
 
-  if (overrides.exclude) {
-    result.exclude = overrides.exclude;
+  if (state.diagnostics.some((diagnostic) => diagnostic.level === "error")) {
+    throw new ConfigError(state.diagnostics);
   }
 
-  if (overrides.integrations) {
-    result.integrations = { ...defaults.integrations, ...overrides.integrations };
+  const { config, disabledRules, finalRules } = mergeSources(state.sources);
+
+  // A disabled stub whose id nothing else defines switches nothing off: say so.
+  for (const disabled of disabledRules) {
+    const entry = finalRules.get(disabled.id);
+    const definedElsewhere = state.sources.some(
+      (source) =>
+        source.label !== disabled.source && source.rules.some((rule) => rule.id === disabled.id)
+    );
+    const isStub = !entry || typeof (entry.rule as { type?: unknown }).type !== "string";
+    if (isStub && !definedElsewhere) {
+      state.diagnostics.push({
+        level: "warning",
+        source: disabled.source,
+        ruleId: disabled.id,
+        message: `rule "${disabled.id}" is disabled, but no preset defines a rule with that id, so nothing was switched off`,
+      });
+    }
   }
 
-  if (overrides.aiInstructions) {
-    result.aiInstructions = {
-      ...defaults.aiInstructions,
-      ...overrides.aiInstructions,
-    };
-  }
-
-  return result;
+  return {
+    config,
+    diagnostics: state.diagnostics,
+    disabledRules,
+    configPath: resolvedPath,
+  };
 }
 
 /**
- * Deep merge configuration objects with custom rules merge strategy (append + dedup by id)
+ * Load chaperone configuration from file.
+ *
+ * @throws {ConfigError} when the configuration is invalid
  */
-function mergeConfigWithCustomRuleMerge(
-  defaults: ChaperoneConfig,
-  overrides: Partial<ChaperoneConfig>
-): ChaperoneConfig {
-  const result = { ...defaults };
-
-  if (overrides.version) {
-    result.version = overrides.version;
-  }
-
-  if (overrides.project) {
-    result.project = { ...defaults.project, ...overrides.project };
-  }
-
-  if (overrides.rules) {
-    const baseCustom = defaults.rules?.custom ?? [];
-    const overrideCustom = overrides.rules.custom ?? [];
-
-    result.rules = {
-      ...defaults.rules,
-      ...overrides.rules,
-      typescript: overrides.rules.typescript
-        ? { ...defaults.rules?.typescript, ...overrides.rules.typescript }
-        : defaults.rules?.typescript,
-      eslint: overrides.rules.eslint
-        ? { ...defaults.rules?.eslint, ...overrides.rules.eslint }
-        : defaults.rules?.eslint,
-      prettier: overrides.rules.prettier
-        ? { ...defaults.rules?.prettier, ...overrides.rules.prettier }
-        : defaults.rules?.prettier,
-      custom: mergeCustomRules(baseCustom, overrideCustom),
-    };
-  }
-
-  if (overrides.include) {
-    result.include = overrides.include;
-  }
-
-  if (overrides.exclude) {
-    result.exclude = overrides.exclude;
-  }
-
-  if (overrides.integrations) {
-    result.integrations = { ...defaults.integrations, ...overrides.integrations };
-  }
-
-  if (overrides.aiInstructions) {
-    result.aiInstructions = {
-      ...defaults.aiInstructions,
-      ...overrides.aiInstructions,
-    };
-  }
-
-  return result;
+export function loadConfig(cwd: string, configPath?: string): ChaperoneConfig {
+  return loadConfigWithDiagnostics(cwd, configPath).config;
 }
 
 /**
- * Validate configuration
+ * Validate a configuration object and return its error messages (empty when valid).
+ * Loading validates automatically; this is kept for programmatic use.
  */
 export function validateConfig(config: ChaperoneConfig): string[] {
-  const errors: string[] = [];
-
-  if (!config.version) {
-    errors.push("Missing version field");
-  }
-
-  if (config.rules?.custom) {
-    for (let i = 0; i < config.rules.custom.length; i++) {
-      const rule = config.rules.custom[i];
-      const ruleId = rule.id;
-      const ruleType = rule.type;
-
-      if (!ruleId) {
-        errors.push(`Custom rule at index ${i} is missing 'id'`);
-      }
-
-      if (!ruleType) {
-        errors.push(`Custom rule '${ruleId || i}' is missing 'type'`);
-      }
-
-      if (ruleType === "file-pairing") {
-        if (!rule.files) {
-          errors.push(`File pairing rule '${ruleId}' is missing 'files'`);
-        }
-
-        if (!rule.pair?.from) {
-          errors.push(`File pairing rule '${ruleId}' is missing 'pair.from'`);
-        }
-
-        if (!rule.pair?.to) {
-          errors.push(`File pairing rule '${ruleId}' is missing 'pair.to'`);
-        }
-      }
-
-      if (ruleType === "file-contract") {
-        if (!rule.files) {
-          errors.push(`File contract rule '${ruleId}' is missing 'files'`);
-        }
-      }
-
-      if (ruleType === "regex") {
-        if (!rule.pattern) {
-          errors.push(`Regex rule '${ruleId}' is missing 'pattern'`);
-        }
-        if (!rule.files) {
-          errors.push(`Regex rule '${ruleId}' is missing 'files'`);
-        }
-        if (!rule.message) {
-          errors.push(`Regex rule '${ruleId}' is missing 'message'`);
-        }
-      }
-
-      if (ruleType === "package-fields") {
-        if (!rule.requiredFields || !Array.isArray(rule.requiredFields) || rule.requiredFields.length === 0) {
-          errors.push(`Package fields rule '${ruleId}' is missing 'requiredFields'`);
-        }
-      }
-
-      if (ruleType === "component-location") {
-        if (!rule.files) {
-          errors.push(`Component location rule '${ruleId}' is missing 'files'`);
-        }
-        if (!rule.componentType) {
-          errors.push(`Component location rule '${ruleId}' is missing 'componentType'`);
-        }
-        if (!rule.requiredLocation) {
-          errors.push(`Component location rule '${ruleId}' is missing 'requiredLocation'`);
-        }
-      }
-
-      if (ruleType === "command") {
-        if (!rule.command) {
-          errors.push(`Command rule '${ruleId}' is missing 'command'`);
-        }
-      }
-
-      if (ruleType === "symbol-reference") {
-        if (!rule.sourceFiles) {
-          errors.push(`Symbol reference rule '${ruleId}' is missing 'sourceFiles'`);
-        }
-        if (!rule.targetFiles) {
-          errors.push(`Symbol reference rule '${ruleId}' is missing 'targetFiles'`);
-        }
-      }
-
-      if (ruleType === "retired-path") {
-        if (!rule.paths || !Array.isArray(rule.paths) || rule.paths.length === 0) {
-          errors.push(`Retired path rule '${ruleId}' is missing 'paths'`);
-        }
-      }
-
-      if (ruleType === "forbidden-import") {
-        if (!rule.files) {
-          errors.push(`Forbidden import rule '${ruleId}' is missing 'files'`);
-        }
-      }
-
-      if (ruleType === "import-boundary") {
-        if (!rule.layers || typeof rule.layers !== "object" || Object.keys(rule.layers).length === 0) {
-          errors.push(`Import boundary rule '${ruleId}' is missing 'layers'`);
-        }
-      }
-
-      if (ruleType === "public-api") {
-        if (!rule.modules) {
-          errors.push(`Public API rule '${ruleId}' is missing 'modules'`);
-        }
-        if (!rule.files) {
-          errors.push(`Public API rule '${ruleId}' is missing 'files'`);
-        }
-      }
-
-      if (ruleType === "directive-export-pattern") {
-        if (!rule.files) {
-          errors.push(`Directive export pattern rule '${ruleId}' is missing 'files'`);
-        }
-        if (!rule.directive) {
-          errors.push(`Directive export pattern rule '${ruleId}' is missing 'directive'`);
-        }
-        if (!rule.allowedExportNamePatterns || !Array.isArray(rule.allowedExportNamePatterns) || rule.allowedExportNamePatterns.length === 0) {
-          errors.push(`Directive export pattern rule '${ruleId}' is missing 'allowedExportNamePatterns'`);
-        }
-      }
-
-    }
-  }
-
-  return errors;
+  const diagnostics = validateConfigShape(config, "config");
+  (config.rules?.custom ?? []).forEach((rule, index) => {
+    diagnostics.push(...validateRule(rule, "config", ["rules", "custom", index]).diagnostics);
+  });
+  return diagnostics
+    .filter((diagnostic) => diagnostic.level === "error")
+    .map((diagnostic) => formatDiagnostic(diagnostic));
 }
 
 /**
- * Get effective include/exclude patterns
+ * Get effective include/exclude patterns.
+ * Excludes are always merged with {@link DEFAULT_EXCLUDE}; they never replace it.
  */
 export function getEffectivePatterns(
   config: ChaperoneConfig,
   overrideInclude?: string[],
   overrideExclude?: string[]
 ): { include: string[]; exclude: string[] } {
+  const exclude = [...DEFAULT_EXCLUDE, ...(overrideExclude ?? config.exclude ?? [])];
   return {
     include: overrideInclude ?? config.include ?? DEFAULT_CONFIG.include ?? [],
-    exclude: overrideExclude ?? config.exclude ?? DEFAULT_CONFIG.exclude ?? [],
+    exclude: [...new Set(exclude)],
   };
 }

@@ -3,9 +3,11 @@ import { formatText } from "./text";
 import { formatJson } from "./json";
 import { formatAI } from "./ai";
 
-export { formatText } from "./text";
-export { formatJson } from "./json";
-export { formatAI } from "./ai";
+export { formatText, type TextFormatOptions } from "./text";
+export { formatJson, type JsonFormatOptions } from "./json";
+export { formatAI, type AIFormatOptions } from "./ai";
+
+export const OUTPUT_FORMATS = ["text", "json", "ai"] as const;
 
 /**
  * Output format types
@@ -16,8 +18,12 @@ export type OutputFormat = "text" | "json" | "ai";
  * Format options
  */
 export interface FormatOptions {
+  /** List only errors; counts still include warnings (all formats) */
   quiet?: boolean;
+  /** Drop warnings entirely (all formats) */
   noWarnings?: boolean;
+  /** ANSI colours for the text format (default: false) */
+  color?: boolean;
 }
 
 /**
@@ -53,16 +59,16 @@ export function format(
   outputFormat: OutputFormat,
   options: FormatOptions = {}
 ): string {
-  const { quiet = false, noWarnings = false } = options;
+  const { quiet = false, noWarnings = false, color = false } = options;
   const filteredSummary = filterSummary(summary, noWarnings);
 
   switch (outputFormat) {
     case "json":
-      return formatJson(filteredSummary, noWarnings);
+      return formatJson(filteredSummary, { quiet });
     case "ai":
-      return formatAI(filteredSummary, noWarnings);
+      return formatAI(filteredSummary, { quiet });
     case "text":
     default:
-      return formatText(filteredSummary, quiet, noWarnings);
+      return formatText(filteredSummary, { quiet, noWarnings, color });
   }
 }

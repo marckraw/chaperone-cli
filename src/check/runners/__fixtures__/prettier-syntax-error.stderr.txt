@@ -1,0 +1,5 @@
+[error] src/broken.ts: SyntaxError: Variable declaration expected. (1:7)
+[error] > 1 | const = ;
+[error]     |       ^
+[error]   2 |
+[warn] src/ugly.ts

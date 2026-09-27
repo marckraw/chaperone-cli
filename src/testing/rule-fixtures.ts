@@ -1,0 +1,102 @@
+import type { RuleType } from "../check/config-schema";
+
+/** One valid example of every rule type. */
+export const VALID_RULES: Record<RuleType, Record<string, unknown>> = {
+  regex: {
+    type: "regex",
+    id: "no-console",
+    severity: "error",
+    files: "src/**/*.ts",
+    pattern: "console\\.log\\(",
+    message: "No console.log",
+  },
+  "file-pairing": {
+    type: "file-pairing",
+    id: "tests",
+    severity: "error",
+    files: "src/**/*.pure.ts",
+    pair: { from: "\\.pure\\.ts$", to: ".pure.test.ts" },
+  },
+  "file-contract": {
+    type: "file-contract",
+    id: "contract",
+    severity: "warning",
+    files: "src/**/*.ts",
+    requiredPatterns: ["export"],
+    assertions: { maxLines: 200 },
+  },
+  "package-fields": {
+    type: "package-fields",
+    id: "pkg",
+    severity: "error",
+    requiredFields: ["name"],
+  },
+  "component-location": {
+    type: "component-location",
+    id: "ui",
+    severity: "error",
+    files: "src/**/*.tsx",
+    componentType: "presentational",
+    requiredLocation: "src/ui/",
+    mustBeIn: true,
+  },
+  "react-component-count": {
+    type: "react-component-count",
+    id: "one-component",
+    severity: "error",
+    files: "src/**/*.tsx",
+    maxComponents: 1,
+  },
+  command: {
+    type: "command",
+    id: "cmd",
+    severity: "error",
+    command: "node",
+    args: ["--version"],
+  },
+  "symbol-reference": {
+    type: "symbol-reference",
+    id: "symbols",
+    severity: "error",
+    sourceFiles: "src/**/*.pure.ts",
+    targetFiles: "src/**/*.pure.test.ts",
+  },
+  "retired-path": {
+    type: "retired-path",
+    id: "retired",
+    severity: "error",
+    paths: [{ pattern: "src/legacy/**" }],
+  },
+  "forbidden-import": {
+    type: "forbidden-import",
+    id: "forbidden",
+    severity: "error",
+    files: "src/**/*.ts",
+    restrictions: [{ source: "^lodash$", allowedIn: [] }],
+  },
+  "import-boundary": {
+    type: "import-boundary",
+    id: "layers",
+    severity: "error",
+    layers: {
+      shared: { files: "src/shared/**", allowImportsFrom: [] },
+      app: { files: "src/app/**", allowImportsFrom: ["shared"] },
+    },
+  },
+  "public-api": {
+    type: "public-api",
+    id: "barrels",
+    severity: "error",
+    modules: "src/features/*",
+    files: "src/**/*.ts",
+  },
+  "directive-export-pattern": {
+    type: "directive-export-pattern",
+    id: "use-client",
+    severity: "error",
+    files: "src/**/*.tsx",
+    directive: "use client",
+    allowedExportNamePatterns: ["^[A-Z]"],
+  },
+};
+

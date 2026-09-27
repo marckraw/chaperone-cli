@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { globSync } from "../../utils/glob";
+import { basename } from "node:path";
+import { countLines } from "../../utils/text";
 import type { CheckResult, FileContractRule, FileContractAssertions } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import type { ImportEntry } from "./utils/import-extractor";
+import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
   try {
@@ -85,16 +86,30 @@ function reportConfigError(rule: FileContractRule, message: string): RuleResult 
   };
 }
 
-function checkAssertions(
+/**
+ * Module pattern from mustImport/mustNotImport ("react-dom", "@tauri-apps/*") as a
+ * regex matching the whole specifier; `*` matches anything, everything else is literal.
+ */
+function modulePattern(pattern: string): RegExp {
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`);
+}
+
+export function checkAssertions(
   content: string,
   assertions: FileContractAssertions,
   file: string,
   ruleId: string,
   severity: "error" | "warning",
-  message?: string
+  message?: string,
+  imports: ImportEntry[] = []
 ): CheckResult[] {
   const results: CheckResult[] = [];
   const lines = content.split("\n");
+  const lineCount = countLines(content);
 
   // firstLine: First non-empty, non-comment line must match
   if (assertions.firstLine !== undefined) {
@@ -153,26 +168,23 @@ function checkAssertions(
     }
   }
 
-  // mustNotImport
+  // mustNotImport (static, side-effect, re-export, dynamic and require references)
   if (assertions.mustNotImport) {
     for (const mod of assertions.mustNotImport) {
-      // Convert glob-like patterns to regex (e.g., "@tauri-apps/*" -> "@tauri-apps/.*")
-      const pattern = mod.replace(/\*/g, ".*");
-      const regex = compileRegex(`['"]${pattern}['"]`);
-      if (regex) {
-        const importRegex = new RegExp(`\\bimport\\s[\\s\\S]*?from\\s+['"]${pattern}['"]`, "m");
-        if (importRegex.test(content)) {
-          results.push({
-            file,
-            rule: `file-contract/${ruleId}`,
-            message: message || `File must not import from: ${mod}`,
-            severity,
-            source: "custom",
-            context: {
-              matchedText: mod,
-            },
-          });
-        }
+      const regex = modulePattern(mod);
+      const offending = imports.find((entry) => regex.test(entry.source));
+      if (offending) {
+        results.push({
+          file,
+          line: offending.line,
+          rule: `file-contract/${ruleId}`,
+          message: message || `File must not import from: ${mod}`,
+          severity,
+          source: "custom",
+          context: {
+            matchedText: offending.source,
+          },
+        });
       }
     }
   }
@@ -180,9 +192,8 @@ function checkAssertions(
   // mustImport
   if (assertions.mustImport) {
     for (const mod of assertions.mustImport) {
-      const pattern = mod.replace(/\*/g, ".*");
-      const importRegex = new RegExp(`\\bimport\\s[\\s\\S]*?from\\s+['"]${pattern}['"]`, "m");
-      if (!importRegex.test(content)) {
+      const regex = modulePattern(mod);
+      if (!imports.some((entry) => regex.test(entry.source))) {
         results.push({
           file,
           rule: `file-contract/${ruleId}`,
@@ -198,18 +209,18 @@ function checkAssertions(
     }
   }
 
-  // maxLines
+  // maxLines (a trailing newline does not count as an extra line)
   if (assertions.maxLines !== undefined) {
-    if (lines.length > assertions.maxLines) {
+    if (lineCount > assertions.maxLines) {
       results.push({
         file,
         rule: `file-contract/${ruleId}`,
-        message: message || `File exceeds maximum of ${assertions.maxLines} lines (has ${lines.length})`,
+        message: message || `File exceeds maximum of ${assertions.maxLines} lines (has ${lineCount})`,
         severity,
         source: "custom",
         context: {
           expectedValue: `<= ${assertions.maxLines}`,
-          actualValue: `${lines.length}`,
+          actualValue: `${lineCount}`,
         },
       });
     }
@@ -217,16 +228,16 @@ function checkAssertions(
 
   // minLines
   if (assertions.minLines !== undefined) {
-    if (lines.length < assertions.minLines) {
+    if (lineCount < assertions.minLines) {
       results.push({
         file,
         rule: `file-contract/${ruleId}`,
-        message: message || `File has fewer than minimum ${assertions.minLines} lines (has ${lines.length})`,
+        message: message || `File has fewer than minimum ${assertions.minLines} lines (has ${lineCount})`,
         severity,
         source: "custom",
         context: {
           expectedValue: `>= ${assertions.minLines}`,
-          actualValue: `${lines.length}`,
+          actualValue: `${lineCount}`,
         },
       });
     }
@@ -242,7 +253,7 @@ function checkAssertions(
       // Check if the line before has a JSDoc comment closing
       let hasJSDoc = false;
       for (let i = prevLines.length - 1; i >= 0; i--) {
-        const trimmed = prevLines[i].trim();
+        const trimmed = (prevLines[i] ?? "").trim();
         if (trimmed === "") continue;
         if (trimmed.endsWith("*/")) {
           hasJSDoc = true;
@@ -304,26 +315,19 @@ export async function runFileContractRule(
   rule: FileContractRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   const staticRequiredPatterns = rule.requiredPatterns ?? [];
   const staticRequiredAnyPatterns = rule.requiredAnyPatterns ?? [];
   const staticForbiddenPatterns = rule.forbiddenPatterns ?? [];
 
-  for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+  for (const file of context.inScope(files)) {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -441,13 +445,15 @@ export async function runFileContractRule(
 
     // Check assertions (if defined)
     if (rule.assertions) {
+      const needsImports = Boolean(rule.assertions.mustImport || rule.assertions.mustNotImport);
       const assertionResults = checkAssertions(
         content,
         rule.assertions,
         file,
         rule.id,
         rule.severity,
-        rule.message
+        rule.message,
+        needsImports ? context.imports(file) : []
       );
       results.push(...assertionResults);
     }
@@ -456,6 +462,7 @@ export async function runFileContractRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

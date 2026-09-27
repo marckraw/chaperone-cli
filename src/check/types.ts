@@ -28,6 +28,55 @@ export interface CheckResult {
 }
 
 /**
+ * A problem found in the configuration itself (not in the code being checked).
+ * Errors stop the run (exit code 2); warnings are reported alongside the results.
+ */
+export interface ConfigDiagnostic {
+  level: "error" | "warning";
+  /** Where the problem is: a config file path relative to cwd, or a built-in preset name */
+  source: string;
+  /** JSON path inside the source, e.g. "rules.custom[2].severity" */
+  path?: string;
+  /** Id of the rule the problem belongs to, when known */
+  ruleId?: string;
+  message: string;
+}
+
+/**
+ * What happened to one tool runner (TypeScript, ESLint, Prettier) during a check.
+ */
+export interface RunnerSummary {
+  name: string;
+  label: string;
+  /** passed/failed: ran and parsed; skipped: did not run (see reason); error: ran but could not be trusted */
+  status: "passed" | "failed" | "skipped" | "error";
+  /** Why it was skipped, or what went wrong */
+  reason?: string;
+  durationMs?: number;
+  errors: number;
+  warnings: number;
+}
+
+/**
+ * What happened to one custom rule during a check.
+ */
+export interface RuleSummary {
+  id: string;
+  type: string;
+  /**
+   * passed/failed: the rule checked at least one file (or does not scan files);
+   * no-files: its file globs matched nothing, so it checked nothing
+   */
+  status: "passed" | "failed" | "no-files";
+  /** Files selected by the rule's globs (undefined for rules that do not scan files) */
+  filesChecked?: number;
+  errors: number;
+  warnings: number;
+  /** Scope notices, e.g. a glob that matched no files */
+  notices: string[];
+}
+
+/**
  * Summary of check results
  */
 export interface CheckSummary {
@@ -38,6 +87,18 @@ export interface CheckSummary {
   success: boolean;
   results: CheckResult[];
   bySource: Record<string, CheckResult[]>;
+  /** Configuration warnings (unknown fields, deprecated options, ...) */
+  diagnostics?: ConfigDiagnostic[];
+  /** What each tool runner did, including why it was skipped */
+  runners?: RunnerSummary[];
+  /** What each custom rule did, including rules whose globs matched no files */
+  rules?: RuleSummary[];
+  /** Rules switched off with `disabled: true` */
+  disabledRules?: Array<{ id: string; source: string }>;
+  /** Set when custom rules were limited to files changed since a git ref (`--since`) */
+  since?: { ref: string; changedFiles: number };
+  /** Directories (ending in "/") and files that could not be read, so were not checked */
+  unreadable?: string[];
 }
 
 /**
@@ -53,6 +114,10 @@ export interface CheckOptions {
   include?: string[];
   exclude?: string[];
   debug?: boolean;
+  /** ANSI colours in text output (default: false) */
+  color?: boolean;
+  /** Limit file-scoped custom rules to files changed since this git ref */
+  since?: string;
 }
 
 /**
@@ -137,6 +202,10 @@ export interface RegexRule extends BaseRule, AIGeneratedMetadata {
   message: string;
   mustMatch?: boolean; // true = must exist, false = must NOT exist (default)
   reportOnce?: boolean; // true = report only first match per file (useful for file-level rules like "must use .tsx")
+  /** RegExp flags (default "m": ^ and $ match per line). "g" is always added. */
+  flags?: string;
+  /** @deprecated Use mustMatch. `forbidden: true` means `mustMatch: false`. Normalized away at load time. */
+  forbidden?: boolean;
 }
 
 /**
@@ -144,7 +213,7 @@ export interface RegexRule extends BaseRule, AIGeneratedMetadata {
  */
 export interface PackageFieldsRule extends BaseRule, AIGeneratedMetadata {
   type: "package-fields";
-  requiredFields: string[]; // Fields that must exist (supports dot notation: "scripts.build")
+  requiredFields?: string[]; // Fields that must exist (supports dot notation: "scripts.build")
   forbiddenFields?: string[]; // Fields that must NOT exist
   fieldPatterns?: Record<string, string>; // Field value must match regex pattern
   message?: string;
@@ -225,14 +294,14 @@ export interface RetiredPathRule extends BaseRule, AIGeneratedMetadata {
 export interface ForbiddenImportRule extends BaseRule, AIGeneratedMetadata {
   type: "forbidden-import";
   files: string; // Glob for files to scan
-  restrictions: Array<{
+  restrictions?: Array<{
     source: string; // Regex matching import source
-    allowedIn: string[]; // Globs for files where this import IS allowed
+    allowedIn?: string[]; // Globs for files where this import IS allowed (default: nowhere)
     message?: string;
   }>;
   checkPatterns?: Array<{
     pattern: string; // Regex matching code usage (e.g., "\\binvoke\\(")
-    allowedIn: string[];
+    allowedIn?: string[]; // default: nowhere
     message?: string;
   }>;
   includeTypeImports?: boolean; // default: false (type imports are safe)
@@ -307,7 +376,7 @@ export type AIInstructionsRule = RegexRule;
  * Tool runner configuration
  */
 export interface ToolConfig {
-  enabled: boolean;
+  enabled?: boolean;
   extensions?: string[];
   args?: string[];
 }
@@ -374,6 +443,12 @@ export interface ChaperoneConfig {
 }
 
 /**
+ * Exclude patterns that always apply. User and preset `exclude` lists are added to these.
+ * `node_modules` and `.git` match at any depth; `/dist` and `/build` only at the project root.
+ */
+export const DEFAULT_EXCLUDE: readonly string[] = ["node_modules", ".git", "/dist", "/build"];
+
+/**
  * Default configuration values
  */
 export const DEFAULT_CONFIG: ChaperoneConfig = {
@@ -385,7 +460,7 @@ export const DEFAULT_CONFIG: ChaperoneConfig = {
     custom: [],
   },
   include: ["src/**/*"],
-  exclude: ["node_modules", "dist", "build", ".git"],
+  exclude: [],
   aiInstructions: {
     autoDetect: true,
     files: [

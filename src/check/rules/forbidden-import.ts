@@ -1,9 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync, matchGlob } from "../../utils/glob";
+import { matchGlob } from "../../utils/glob";
 import type { CheckResult, ForbiddenImportRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-import { extractImports } from "./utils/import-extractor";
+import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
   try {
@@ -17,34 +15,25 @@ export async function runForbiddenImportRule(
   rule: ForbiddenImportRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   const includeTypeImports = rule.includeTypeImports ?? false;
 
-  for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+  for (const file of context.inScope(files)) {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
     // Check import restrictions
     if (rule.restrictions) {
-      const imports = extractImports(content, {
-        includeTypeImports,
-        includeDynamicImports: true,
-        includeRequire: true,
-      });
+      const imports = context
+        .imports(file)
+        .filter((entry) => includeTypeImports || !entry.isTypeImport);
 
       for (const imp of imports) {
         for (const restriction of rule.restrictions) {
@@ -66,7 +55,7 @@ export async function runForbiddenImportRule(
 
           if (sourceRegex.test(imp.source)) {
             // Check if this file is in the allowedIn list
-            const isAllowed = restriction.allowedIn.some((glob) =>
+            const isAllowed = (restriction.allowedIn ?? []).some((glob) =>
               matchGlob(file, glob)
             );
             if (!isAllowed) {
@@ -114,7 +103,7 @@ export async function runForbiddenImportRule(
         let patternMatch: RegExpExecArray | null;
 
         while ((patternMatch = globalRegex.exec(content)) !== null) {
-          const isAllowed = checkPattern.allowedIn.some((glob) =>
+          const isAllowed = (checkPattern.allowedIn ?? []).some((glob) =>
             matchGlob(file, glob)
           );
           if (!isAllowed) {
@@ -147,6 +136,7 @@ export async function runForbiddenImportRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 
