@@ -1,89 +1,53 @@
-import { existsSync } from "node:fs";
-import { join, dirname, relative, resolve } from "node:path";
 import type { CheckResult, ImportBoundaryRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-import { extractImports } from "./utils/import-extractor";
 import { getRuleContext } from "./utils/rule-context";
 
-const EXTENSIONS_TO_TRY = [".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
-
 /**
- * Resolve a relative import to a file path relative to cwd.
- * Tries common extensions if the exact path doesn't exist.
+ * Enforce architectural layer boundaries.
+ *
+ * Every import that resolves to a project file is checked: relative imports,
+ * directory imports (index files), `.js` specifiers for `.ts` sources, and tsconfig
+ * `paths`/`baseUrl` aliases such as `@/features/x`. Packages are ignored.
  */
-function resolveImportPath(
-  importSource: string,
-  importingFile: string,
-  cwd: string
-): string | null {
-  if (!importSource.startsWith("./") && !importSource.startsWith("../")) {
-    return null; // Skip bare specifiers (npm packages)
-  }
-
-  const importingDir = dirname(join(cwd, importingFile));
-  const resolved = resolve(importingDir, importSource);
-  const relativeResolved = relative(cwd, resolved);
-
-  // Try exact path first
-  if (existsSync(resolved)) {
-    return relativeResolved;
-  }
-
-  // Try with extensions
-  for (const ext of EXTENSIONS_TO_TRY) {
-    const withExt = resolved + ext;
-    if (existsSync(withExt)) {
-      return relative(cwd, withExt);
-    }
-  }
-
-  return null;
-}
-
 export async function runImportBoundaryRule(
   rule: ImportBoundaryRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
+  const notices: string[] = [];
+
   const includeTypeImports = rule.includeTypeImports ?? true;
   const includeDynamicImports = rule.includeDynamicImports ?? true;
 
-  // Step 1: Build fileToLayer map
+  // Step 1: Build fileToLayer map (when globs overlap, the layer listed last wins)
   const fileToLayer = new Map<string, string>();
+  const emptyLayers: string[] = [];
 
   for (const [layerName, layerConfig] of Object.entries(rule.layers)) {
     const layerFiles = index.glob(layerConfig.files, rule.exclude ?? []);
-
+    if (layerFiles.length === 0) {
+      emptyLayers.push(`${layerName} (${layerConfig.files})`);
+    }
     for (const file of layerFiles) {
       fileToLayer.set(file, layerName);
     }
   }
 
+  if (emptyLayers.length > 0 && emptyLayers.length < Object.keys(rule.layers).length) {
+    notices.push(`layers with no matching files: ${emptyLayers.join(", ")}`);
+  }
+
   // Step 2: For each file in any layer, check its imports
   for (const [file, sourceLayer] of fileToLayer.entries()) {
-    const content = index.read(file);
-    if (content === null) {
-      continue;
-    }
+    const allowedLayers = new Set(rule.layers[sourceLayer]?.allowImportsFrom ?? []);
 
-    const imports = extractImports(content, {
-      includeTypeImports,
-      includeDynamicImports,
-      includeRequire: true,
-    });
+    for (const entry of context.imports(file)) {
+      if (!includeTypeImports && entry.isTypeImport) continue;
+      if (!includeDynamicImports && entry.isDynamic) continue;
 
-    const allowedLayers = new Set(
-      rule.layers[sourceLayer].allowImportsFrom
-    );
-
-    for (const imp of imports) {
-      // Only check relative imports
-      if (!imp.source.startsWith("./") && !imp.source.startsWith("../")) {
-        continue;
-      }
-
-      const resolvedPath = resolveImportPath(imp.source, file, cwd);
+      const resolvedPath = context.resolveImport(entry.source, file);
       if (!resolvedPath) continue;
 
       const targetLayer = fileToLayer.get(resolvedPath);
@@ -93,19 +57,20 @@ export async function runImportBoundaryRule(
       if (targetLayer === sourceLayer) continue;
 
       if (!allowedLayers.has(targetLayer)) {
+        const allowed = Array.from(allowedLayers);
         results.push({
           file,
           rule: `import-boundary/${rule.id}`,
           message:
             rule.message ||
-            `Layer "${sourceLayer}" cannot import from layer "${targetLayer}". Allowed: ${Array.from(allowedLayers).join(", ") || "none"}`,
+            `Layer "${sourceLayer}" cannot import from layer "${targetLayer}". Allowed: ${allowed.join(", ") || "none"}`,
           severity: rule.severity,
           source: "custom",
-          line: imp.line,
+          line: entry.line,
           context: {
-            matchedText: imp.source,
-            expectedValue: `Import from: ${Array.from(allowedLayers).join(", ") || "self only"}`,
-            actualValue: `Imports from: ${targetLayer}`,
+            matchedText: entry.source,
+            expectedValue: `Import from: ${allowed.join(", ") || "self only"}`,
+            actualValue: `Imports ${resolvedPath} (layer "${targetLayer}")`,
           },
         });
       }
@@ -116,6 +81,7 @@ export async function runImportBoundaryRule(
     ruleId: rule.id,
     results,
     filesChecked: fileToLayer.size,
+    notices,
   };
 }
 

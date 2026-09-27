@@ -1,7 +1,6 @@
 import { matchGlob } from "../../utils/glob";
 import type { CheckResult, ForbiddenImportRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-import { extractImports } from "./utils/import-extractor";
 import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
@@ -16,7 +15,8 @@ export async function runForbiddenImportRule(
   rule: ForbiddenImportRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
   const files = index.glob(rule.files, rule.exclude ?? []);
@@ -31,11 +31,9 @@ export async function runForbiddenImportRule(
 
     // Check import restrictions
     if (rule.restrictions) {
-      const imports = extractImports(content, {
-        includeTypeImports,
-        includeDynamicImports: true,
-        includeRequire: true,
-      });
+      const imports = context
+        .imports(file)
+        .filter((entry) => includeTypeImports || !entry.isTypeImport);
 
       for (const imp of imports) {
         for (const restriction of rule.restrictions) {

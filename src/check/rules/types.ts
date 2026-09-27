@@ -1,5 +1,6 @@
 import type { CheckResult, CustomRule } from "../types";
 import type { FileIndex } from "../../utils/file-index";
+import type { ImportEntry } from "./utils/import-extractor";
 
 /**
  * Debug callback for reporting rule execution
@@ -13,6 +14,14 @@ export interface RuleContext {
   readonly cwd: string;
   /** Every file that survived the global excludes, plus a lazy content cache */
   readonly index: FileIndex;
+  /** Every module reference in a file (cached; unfiltered) */
+  imports(file: string): ImportEntry[];
+  /**
+   * Resolve a specifier imported by `fromFile` to an indexed file: relative paths,
+   * directory index files, .js → .ts, and tsconfig `paths`/`baseUrl` aliases.
+   * Null for packages and anything outside the index.
+   */
+  resolveImport(specifier: string, fromFile: string): string | null;
 }
 
 /**

@@ -115,7 +115,8 @@ async function dispatchRule(rule: CustomRule, options: RuleRunnerOptions, onDebu
   }
 
   // Unreachable for validated configs; never skip a rule silently.
-  return errorResult(rule.id, `config/${rule.id}`, `Unknown rule type "${String((rule as { type?: unknown }).type)}"`);
+  const unknownRule = rule as unknown as { id: string; type?: unknown };
+  return errorResult(unknownRule.id, `config/${unknownRule.id}`, `Unknown rule type "${String(unknownRule.type)}"`);
 }
 
 function errorResult(ruleId: string, ruleName: string, message: string): RuleResult {

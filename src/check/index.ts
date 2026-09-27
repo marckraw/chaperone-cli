@@ -51,7 +51,9 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
 
   // Walk the tree once; every rule shares this index and its content cache
   onProgress?.("Scanning files", "start");
-  const context = createRuleContext(cwd, patterns.exclude);
+  const context = createRuleContext(cwd, patterns.exclude, {
+    useTsconfigPaths: config.integrations?.useTypescriptPaths !== false,
+  });
   const totalFiles = countFilesToCheck(context.index, patterns.include);
   onProgress?.("Scanning files", "done");
 
