@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { globSync } from "../../utils/glob";
+import { basename } from "node:path";
 import type { CheckResult, FileContractRule, FileContractAssertions } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
   try {
@@ -304,26 +303,18 @@ export async function runFileContractRule(
   rule: FileContractRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { index } = getRuleContext(options);
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   const staticRequiredPatterns = rule.requiredPatterns ?? [];
   const staticRequiredAnyPatterns = rule.requiredAnyPatterns ?? [];
   const staticForbiddenPatterns = rule.forbiddenPatterns ?? [];
 
   for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -456,6 +447,7 @@ export async function runFileContractRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { globSync } from "../../utils/glob";
 import type { CheckResult, FilePairingRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
   try {
@@ -16,14 +16,10 @@ export async function runFilePairingRule(
   rule: FilePairingRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { cwd, index } = getRuleContext(options);
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   const transformRegex = compileRegex(rule.pair.from);
   if (!transformRegex) {
@@ -65,8 +61,8 @@ export async function runFilePairingRule(
       continue;
     }
 
-    const fullCompanionPath = join(cwd, transformed);
-    const companionExists = existsSync(fullCompanionPath);
+    // The companion may live in an excluded directory, so fall back to the filesystem.
+    const companionExists = index.has(transformed) || existsSync(join(cwd, transformed));
 
     if (mustExist && !companionExists) {
       results.push({
@@ -102,6 +98,7 @@ export async function runFilePairingRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync } from "../../utils/glob";
 import type { CheckResult, RegexRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 /**
  * Run regex rule to find forbidden/required patterns
@@ -11,17 +9,11 @@ export async function runRegexRule(
   rule: RegexRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { index } = getRuleContext(options);
   const results: CheckResult[] = [];
 
-  // Merge global excludes with rule-specific excludes
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-
-  // Find files matching the glob pattern
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  // Find files matching the glob pattern (global excludes are applied by the index)
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   // Compile the regex
   let regex: RegExp;
@@ -43,12 +35,8 @@ export async function runRegexRule(
   }
 
   for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content: string;
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -117,6 +105,7 @@ export async function runRegexRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

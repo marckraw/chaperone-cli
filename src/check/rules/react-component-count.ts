@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync } from "../../utils/glob";
 import type { CheckResult, ReactComponentCountRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 interface ReactComponentCandidate {
   name: string;
@@ -385,8 +383,6 @@ export async function runReactComponentCountRule(
   rule: ReactComponentCountRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
   const results: CheckResult[] = [];
   const maxComponents = rule.maxComponents ?? 1;
   const ignoreNames = new Set(rule.ignoreNames ?? []);
@@ -406,18 +402,12 @@ export async function runReactComponentCountRule(
     };
   }
 
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const { index } = getRuleContext(options);
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -453,6 +443,7 @@ export async function runReactComponentCountRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

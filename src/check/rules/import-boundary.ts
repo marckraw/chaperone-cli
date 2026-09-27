@@ -1,9 +1,9 @@
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, dirname, relative, resolve } from "node:path";
-import { globSync } from "../../utils/glob";
 import type { CheckResult, ImportBoundaryRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { extractImports } from "./utils/import-extractor";
+import { getRuleContext } from "./utils/rule-context";
 
 const EXTENSIONS_TO_TRY = [".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
 
@@ -44,10 +44,8 @@ export async function runImportBoundaryRule(
   rule: ImportBoundaryRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { cwd, index } = getRuleContext(options);
   const results: CheckResult[] = [];
-
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
   const includeTypeImports = rule.includeTypeImports ?? true;
   const includeDynamicImports = rule.includeDynamicImports ?? true;
 
@@ -55,10 +53,7 @@ export async function runImportBoundaryRule(
   const fileToLayer = new Map<string, string>();
 
   for (const [layerName, layerConfig] of Object.entries(rule.layers)) {
-    const layerFiles = globSync(layerConfig.files, {
-      cwd,
-      ignore: allExcludes,
-    });
+    const layerFiles = index.glob(layerConfig.files, rule.exclude ?? []);
 
     for (const file of layerFiles) {
       fileToLayer.set(file, layerName);
@@ -67,12 +62,8 @@ export async function runImportBoundaryRule(
 
   // Step 2: For each file in any layer, check its imports
   for (const [file, sourceLayer] of fileToLayer.entries()) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -124,6 +115,7 @@ export async function runImportBoundaryRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: fileToLayer.size,
   };
 }
 

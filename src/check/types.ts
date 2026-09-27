@@ -374,6 +374,12 @@ export interface ChaperoneConfig {
 }
 
 /**
+ * Exclude patterns that always apply. User and preset `exclude` lists are added to these.
+ * `node_modules` and `.git` match at any depth; `/dist` and `/build` only at the project root.
+ */
+export const DEFAULT_EXCLUDE: readonly string[] = ["node_modules", ".git", "/dist", "/build"];
+
+/**
  * Default configuration values
  */
 export const DEFAULT_CONFIG: ChaperoneConfig = {
@@ -385,7 +391,7 @@ export const DEFAULT_CONFIG: ChaperoneConfig = {
     custom: [],
   },
   include: ["src/**/*"],
-  exclude: ["node_modules", "dist", "build", ".git"],
+  exclude: [],
   aiInstructions: {
     autoDetect: true,
     files: [

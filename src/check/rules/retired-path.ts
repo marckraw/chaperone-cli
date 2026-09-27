@@ -1,21 +1,16 @@
-import { globSync } from "../../utils/glob";
 import type { CheckResult, RetiredPathRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 export async function runRetiredPathRule(
   rule: RetiredPathRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { index } = getRuleContext(options);
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-
   for (const entry of rule.paths) {
-    const files = globSync(entry.pattern, {
-      cwd,
-      ignore: allExcludes,
-    });
+    const files = index.glob(entry.pattern, rule.exclude ?? []);
 
     for (const file of files) {
       let message = rule.message || `File exists in retired path matching "${entry.pattern}"`;

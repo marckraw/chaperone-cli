@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync } from "../../utils/glob";
 import type { CheckResult, SymbolReferenceRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { getRuleContext } from "./utils/rule-context";
 
 interface ExportedSymbol {
   name: string;
@@ -118,20 +116,16 @@ export async function runSymbolReferenceRule(
   rule: SymbolReferenceRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
+  const { index } = getRuleContext(options);
+  const ruleExcludes = rule.exclude ?? [];
   const results: CheckResult[] = [];
 
-  const sourceFiles = globSync(rule.sourceFiles, { cwd, ignore: allExcludes });
-  const targetFiles = globSync(rule.targetFiles, { cwd, ignore: allExcludes });
+  const sourceFiles = index.glob(rule.sourceFiles, ruleExcludes);
+  const targetFiles = index.glob(rule.targetFiles, ruleExcludes);
 
   const targetContentByFile = new Map<string, string>();
   for (const filePath of targetFiles) {
-    try {
-      targetContentByFile.set(filePath, readFileSync(join(cwd, filePath), "utf-8"));
-    } catch {
-      targetContentByFile.set(filePath, "");
-    }
+    targetContentByFile.set(filePath, index.read(filePath) ?? "");
   }
 
   const kinds = rule.symbolKinds ?? ["function-declaration", "function-variable"];
@@ -151,11 +145,8 @@ export async function runSymbolReferenceRule(
   const symbolFilter = rule.symbolPattern ? new RegExp(rule.symbolPattern) : null;
 
   for (const sourceFile of sourceFiles) {
-    const fullPath = join(cwd, sourceFile);
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(sourceFile);
+    if (content === null) {
       continue;
     }
 
@@ -202,6 +193,7 @@ export async function runSymbolReferenceRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: sourceFiles.length,
   };
 }
 

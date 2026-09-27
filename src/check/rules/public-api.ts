@@ -1,9 +1,10 @@
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, dirname, relative, resolve, basename } from "node:path";
-import { globSync } from "../../utils/glob";
+import type { FileIndex } from "../../utils/file-index";
 import type { CheckResult, PublicApiRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { extractImports } from "./utils/import-extractor";
+import { getRuleContext } from "./utils/rule-context";
 
 const EXTENSIONS_TO_TRY = [".ts", ".tsx", ".js", ".jsx"];
 
@@ -13,39 +14,16 @@ const EXTENSIONS_TO_TRY = [".ts", ".tsx", ".js", ".jsx"];
  */
 function discoverModuleRoots(
   modulesPattern: string,
-  cwd: string,
-  ignore: string[]
+  index: FileIndex,
+  ignore: readonly string[]
 ): string[] {
-  const parts = modulesPattern.split("/");
-  const lastPart = parts[parts.length - 1];
-
-  if (lastPart === "*") {
-    const parentPath = parts.slice(0, -1).join("/");
-    const fullParentPath = join(cwd, parentPath);
-
-    if (!existsSync(fullParentPath)) {
-      return [];
-    }
-
-    try {
-      const { readdirSync } = require("node:fs");
-      const entries = readdirSync(fullParentPath, { withFileTypes: true });
-      return entries
-        .filter((e: any) => e.isDirectory())
-        .map((e: any) => join(parentPath, e.name));
-    } catch {
-      return [];
-    }
-  }
-
-  // Fallback: glob for files and extract unique module root paths
-  const files = globSync(modulesPattern + "/**/*", { cwd, ignore });
+  const parts = modulesPattern.replace(/\/+$/, "").split("/");
+  const files = index.glob(`${parts.join("/")}/**`, ignore);
   const roots = new Set<string>();
   for (const file of files) {
     const fileParts = file.split("/");
     if (fileParts.length > parts.length) {
-      const rootPath = fileParts.slice(0, parts.length).join("/");
-      roots.add(rootPath);
+      roots.add(fileParts.slice(0, parts.length).join("/"));
     }
   }
   return Array.from(roots).sort();
@@ -87,29 +65,21 @@ export async function runPublicApiRule(
   rule: PublicApiRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { cwd, index } = getRuleContext(options);
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
   const barrelFile = rule.barrelFile ?? "index.ts";
   const allowSameModule = rule.allowSameModule ?? true;
 
   // Discover module roots
-  const moduleRoots = discoverModuleRoots(rule.modules, cwd, allExcludes);
+  const moduleRoots = discoverModuleRoots(rule.modules, index, rule.exclude ?? []);
 
   // Get all files to check
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -196,6 +166,7 @@ export async function runPublicApiRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

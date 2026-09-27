@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { globSync, matchGlob } from "../../utils/glob";
+import { matchGlob } from "../../utils/glob";
 import type { CheckResult, ForbiddenImportRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { extractImports } from "./utils/import-extractor";
+import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
   try {
@@ -17,24 +16,16 @@ export async function runForbiddenImportRule(
   rule: ForbiddenImportRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, exclude } = options;
+  const { index } = getRuleContext(options);
   const results: CheckResult[] = [];
 
-  const allExcludes = [...exclude, ...(rule.exclude ?? [])];
-  const files = globSync(rule.files, {
-    cwd,
-    ignore: allExcludes,
-  });
+  const files = index.glob(rule.files, rule.exclude ?? []);
 
   const includeTypeImports = rule.includeTypeImports ?? false;
 
   for (const file of files) {
-    const fullPath = join(cwd, file);
-
-    let content = "";
-    try {
-      content = readFileSync(fullPath, "utf-8");
-    } catch {
+    const content = index.read(file);
+    if (content === null) {
       continue;
     }
 
@@ -147,6 +138,7 @@ export async function runForbiddenImportRule(
   return {
     ruleId: rule.id,
     results,
+    filesChecked: files.length,
   };
 }
 

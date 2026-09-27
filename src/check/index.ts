@@ -2,8 +2,9 @@ import { loadConfig, getEffectivePatterns } from "./config-loader";
 import { runAllTools } from "./runners";
 import { runAllRules } from "./rules";
 import { format, type OutputFormat } from "./formatters";
-import type { CheckOptions, CheckResult, CheckSummary, ChaperoneConfig } from "./types";
-import { globSync } from "../utils/glob";
+import type { CheckOptions, CheckResult, CheckSummary } from "./types";
+import { createRuleContext } from "./rules/utils/rule-context";
+import type { FileIndex } from "../utils/file-index";
 
 export * from "./types";
 export * from "./config-loader";
@@ -44,9 +45,10 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   // Get effective include/exclude patterns
   const patterns = getEffectivePatterns(config, include, exclude);
 
-  // Count total files to check
+  // Walk the tree once; every rule shares this index and its content cache
   onProgress?.("Scanning files", "start");
-  const allFiles = countFilesToCheck(cwd, patterns.include, patterns.exclude);
+  const context = createRuleContext(cwd, patterns.exclude);
+  const allFiles = countFilesToCheck(context.index, patterns.include);
   onProgress?.("Scanning files", "done");
 
   // Run TypeScript
@@ -84,6 +86,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     include: patterns.include,
     exclude: patterns.exclude,
     onDebug,
+    context,
   });
 
   const customRulesCount = config.rules?.custom?.length ?? 0;
@@ -130,14 +133,13 @@ export async function checkAndFormat(options: CheckOptionsWithProgress): Promise
 }
 
 /**
- * Count files that will be checked
+ * Count indexed files matched by the include patterns
  */
-function countFilesToCheck(cwd: string, include: string[], exclude: string[]): number {
+function countFilesToCheck(index: FileIndex, include: string[]): number {
   const allFiles = new Set<string>();
 
   for (const pattern of include) {
-    const files = globSync(pattern, { cwd, ignore: exclude });
-    for (const file of files) {
+    for (const file of index.glob(pattern)) {
       allFiles.add(file);
     }
   }

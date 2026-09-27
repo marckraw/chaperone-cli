@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
-import { ChaperoneConfig, CustomRule, DEFAULT_CONFIG } from "./types";
+import { ChaperoneConfig, CustomRule, DEFAULT_CONFIG, DEFAULT_EXCLUDE } from "./types";
 import { getBuiltInPreset, listBuiltInPresets } from "../presets";
 import type { ChaperonePreset } from "../presets";
 
@@ -388,15 +388,17 @@ export function validateConfig(config: ChaperoneConfig): string[] {
 }
 
 /**
- * Get effective include/exclude patterns
+ * Get effective include/exclude patterns.
+ * Excludes are always merged with {@link DEFAULT_EXCLUDE}; they never replace it.
  */
 export function getEffectivePatterns(
   config: ChaperoneConfig,
   overrideInclude?: string[],
   overrideExclude?: string[]
 ): { include: string[]; exclude: string[] } {
+  const exclude = [...DEFAULT_EXCLUDE, ...(overrideExclude ?? config.exclude ?? [])];
   return {
     include: overrideInclude ?? config.include ?? DEFAULT_CONFIG.include ?? [],
-    exclude: overrideExclude ?? config.exclude ?? DEFAULT_CONFIG.exclude ?? [],
+    exclude: [...new Set(exclude)],
   };
 }
