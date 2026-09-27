@@ -90,6 +90,25 @@ function findBodyAfterParameters(tokens: Token[], structure: BracketStructure, c
   return isPunct(tokens[index], "{") ? index : -1;
 }
 
+/**
+ * At a `<` that follows a name, find the `>` closing a generic type argument list
+ * (`forwardRef<A, B>(`); returns -1 when it is not followed by a call.
+ */
+function closingTypeArguments(tokens: Token[], structure: BracketStructure, open: number): number {
+  const baseDepth = structure.depth[open]!;
+  let angles = 0;
+  for (let index = open; index < tokens.length; index++) {
+    const depth = structure.depth[index]!;
+    if (depth < baseDepth) return -1;
+    if (depth > baseDepth) continue;
+    const token = tokens[index]!;
+    if (isPunct(token, "<")) angles++;
+    else if (isPunct(token, ">") && --angles === 0) return isPunct(tokens[index + 1], "(") ? index : -1;
+    else if (isPunct(token, ";") || isPunct(token, "=") || isPunct(token, "=>")) return -1;
+  }
+  return -1;
+}
+
 /** End (exclusive) of a variable initializer that starts at `start` */
 function initializerEnd(tokens: Token[], structure: BracketStructure, start: number, lines: LineIndex): number {
   const baseDepth = structure.depth[start]!;
@@ -107,6 +126,14 @@ function initializerEnd(tokens: Token[], structure: BracketStructure, start: num
     const token = tokens[index]!;
     if (structure.depth[index]! < baseDepth) return index;
     if (structure.depth[index] !== baseDepth) continue;
+    // Generic call arguments contain commas that do not end the declarator: forwardRef<A, B>(...)
+    if (isPunct(token, "<") && tokens[index - 1]?.type === "name") {
+      const close = closingTypeArguments(tokens, structure, index);
+      if (close !== -1) {
+        index = close;
+        continue;
+      }
+    }
     if (isPunct(token, ";") || isPunct(token, ",")) return index;
     if (index > start && token.type === "name" && STATEMENT_KEYWORDS.has(token.value)) {
       const previous = tokens[index - 1]!;

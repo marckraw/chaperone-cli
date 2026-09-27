@@ -187,3 +187,26 @@ describe("runReactComponentCountRule: component detection", () => {
     ).toEqual([]);
   });
 });
+
+describe("runReactComponentCountRule: generic wrappers", () => {
+  test("counts forwardRef components with multi-argument generics", async () => {
+    const cwd = makeProject({
+      "src/menu.tsx": [
+        "const MenuContent = React.forwardRef<",
+        "  React.ComponentRef<typeof Primitive.Content>,",
+        "  React.ComponentPropsWithoutRef<typeof Primitive.Content>",
+        ">(({ className, ...props }, ref) => <Primitive.Content ref={ref} {...props} />)",
+        "MenuContent.displayName = 'MenuContent'",
+        "",
+        "const MenuItem = React.forwardRef<HTMLDivElement, Props>((props, ref) => <div ref={ref} />)",
+        "const Menu = Primitive.Root",
+        "",
+      ].join("\n"),
+    });
+    const result = await runReactComponentCountRule(
+      { type: "react-component-count", id: "one", severity: "error", files: "src/**/*.tsx" },
+      { cwd, include: [], exclude: [] }
+    );
+    expect(result.results[0]?.context?.actualValue).toBe("2: MenuContent, MenuItem");
+  });
+});
