@@ -146,3 +146,14 @@ describe("chaperone check visibility", () => {
     expect(ai).toContain('Rule "vue-only" (regex): "files" glob "src/**/*.vue" matched no files');
   });
 });
+
+describe("chaperone init", () => {
+  test("writes a config that loads without warnings", () => {
+    const cwd = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
+    expect(runCli(["init", "--yes"], cwd).exitCode).toBe(0);
+
+    const json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
+    expect(json.diagnostics).toEqual([]);
+    expect(runCli(["init", "--yes"], cwd).exitCode).toBe(2);
+  });
+});

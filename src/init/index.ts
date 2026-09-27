@@ -15,7 +15,8 @@ import type {
 const CONFIG_VERSION = "1.0.0";
 
 const DEFAULT_INCLUDE = ["src/**/*"];
-const DEFAULT_EXCLUDE = ["node_modules", "dist", "build"];
+// node_modules, .git, /dist and /build are always excluded; this list only adds to them
+const DEFAULT_EXCLUDE: string[] = [];
 
 /**
  * Print detection results to console
@@ -80,11 +81,6 @@ function buildConfig(
     rules: {},
     include,
     exclude,
-    integrations: {
-      respectEslintIgnore: detection.eslint.detected,
-      respectPrettierIgnore: detection.prettier.detected,
-      useTypescriptPaths: detection.typescript.detected,
-    },
   };
 }
 
@@ -166,8 +162,11 @@ export async function runInit(args: string[]): Promise<number> {
 
   if (!options.yes) {
     // Interactive mode - prompt for include/exclude
-    include = await inputList("? Include directories", DEFAULT_INCLUDE);
-    exclude = await inputList("? Exclude directories", DEFAULT_EXCLUDE);
+    include = await inputList("? Include patterns", DEFAULT_INCLUDE);
+    exclude = await inputList(
+      "? Extra exclude patterns (node_modules, .git, /dist and /build are always excluded)",
+      DEFAULT_EXCLUDE
+    );
     console.log("");
   }
 

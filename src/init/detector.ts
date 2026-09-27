@@ -3,6 +3,12 @@
  */
 
 import { fileExists, readJsonFile, findFirstExisting, joinPath } from "../utils/fs";
+import {
+  ESLINT_FLAT_CONFIG_FILES,
+  ESLINT_LEGACY_CONFIG_FILES,
+  PRETTIER_CONFIG_FILES,
+  TYPESCRIPT_CONFIG_FILES,
+} from "../utils/tool-configs";
 import type {
   DetectionResult,
   TypeScriptDetection,
@@ -14,39 +20,11 @@ import type {
   PackageManagerName,
 } from "./types";
 
-// TypeScript config patterns
-const TYPESCRIPT_CONFIGS = ["tsconfig.json"];
-
-// ESLint config patterns
-const ESLINT_LEGACY_CONFIGS = [
-  ".eslintrc",
-  ".eslintrc.js",
-  ".eslintrc.cjs",
-  ".eslintrc.json",
-  ".eslintrc.yaml",
-  ".eslintrc.yml",
-];
-
-const ESLINT_FLAT_CONFIGS = [
-  "eslint.config.js",
-  "eslint.config.mjs",
-  "eslint.config.cjs",
-  "eslint.config.ts",
-];
-
-// Prettier config patterns
-const PRETTIER_CONFIGS = [
-  ".prettierrc",
-  ".prettierrc.json",
-  ".prettierrc.yaml",
-  ".prettierrc.yml",
-  ".prettierrc.js",
-  ".prettierrc.cjs",
-  ".prettierrc.mjs",
-  "prettier.config.js",
-  "prettier.config.cjs",
-  "prettier.config.mjs",
-];
+// Config file names are shared with the check runners so detection and checking agree
+const TYPESCRIPT_CONFIGS = [...TYPESCRIPT_CONFIG_FILES];
+const ESLINT_LEGACY_CONFIGS = [...ESLINT_LEGACY_CONFIG_FILES];
+const ESLINT_FLAT_CONFIGS = [...ESLINT_FLAT_CONFIG_FILES];
+const PRETTIER_CONFIGS = [...PRETTIER_CONFIG_FILES];
 
 // Package manager lockfiles (in priority order)
 const PACKAGE_MANAGER_LOCKFILES: Array<{ lockfile: string; name: PackageManagerName }> = [
