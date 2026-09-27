@@ -166,9 +166,18 @@ async function runCheck(args: string[]): Promise<number> {
   const showProgress = format === "text" && interactive && !parsedArgs.noProgress && !parsedArgs.quiet;
   const stderrColors = createPalette(shouldUseColor(process.stderr));
 
-  // Track completed steps to avoid duplicates
+  // Steps overlap (tools and rules run concurrently): show every active step
+  const activeSteps: string[] = [];
   const completedSteps = new Set<string>();
   const spinner = createSpinner("", { enabled: showProgress });
+  const refreshSpinner = () => {
+    if (activeSteps.length === 0) {
+      spinner.stop();
+    } else {
+      spinner.update(activeSteps.join(", "));
+      spinner.start();
+    }
+  };
 
   const options = createCheckOptions({
     cwd: parsedArgs.cwd ?? process.cwd(),
@@ -182,18 +191,22 @@ async function runCheck(args: string[]): Promise<number> {
     onProgress: showProgress
       ? (step, status) => {
           if (status === "start") {
-            spinner.start(step);
-          } else if (!completedSteps.has(step)) {
-            completedSteps.add(step);
-            if (status === "done") {
-              spinner.succeed(step);
-            } else {
-              spinner.stop();
-              spinner.log(
-                `${stderrColors.yellow}○${stderrColors.reset} ${step} ${stderrColors.dim}(skipped)${stderrColors.reset}`
-              );
-            }
+            if (!activeSteps.includes(step)) activeSteps.push(step);
+            refreshSpinner();
+            return;
           }
+          if (completedSteps.has(step)) return;
+          completedSteps.add(step);
+          const position = activeSteps.indexOf(step);
+          if (position !== -1) activeSteps.splice(position, 1);
+          const marker =
+            status === "done"
+              ? `${stderrColors.green}✓${stderrColors.reset} ${step}`
+              : status === "failed"
+                ? `${stderrColors.red}✗${stderrColors.reset} ${step} ${stderrColors.dim}(could not run)${stderrColors.reset}`
+                : `${stderrColors.yellow}○${stderrColors.reset} ${step} ${stderrColors.dim}(skipped)${stderrColors.reset}`;
+          spinner.log(marker);
+          refreshSpinner();
         }
       : undefined,
     onDebug: parsedArgs.debug

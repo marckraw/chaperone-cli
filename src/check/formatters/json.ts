@@ -1,4 +1,5 @@
-import type { CheckSummary, ConfigDiagnostic } from "../types";
+import type { CheckSummary, ConfigDiagnostic, RunnerSummary } from "../types";
+import { describeGaps } from "./shared";
 
 export interface JsonFormatOptions {
   /** Include only errors in results/bySource (summary counts are unchanged) */
@@ -10,6 +11,10 @@ export interface JsonFormatOptions {
  */
 export interface JsonOutput {
   success: boolean;
+  /** "passed", "passed-with-gaps" (something was skipped) or "failed" */
+  status: "passed" | "passed-with-gaps" | "failed";
+  /** What was not checked (skipped tools, ...), so a pass is never mistaken for a full pass */
+  gaps: string[];
   summary: {
     totalFiles: number;
     totalErrors: number;
@@ -42,6 +47,8 @@ export interface JsonOutput {
   >;
   /** Configuration warnings */
   diagnostics: ConfigDiagnostic[];
+  /** What each tool runner did, including why it was skipped */
+  runners: RunnerSummary[];
 }
 
 /**
@@ -51,8 +58,11 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
   const listed = options.quiet
     ? summary.results.filter((result) => result.severity === "error")
     : summary.results;
+  const gaps = describeGaps(summary);
   const output: JsonOutput = {
     success: summary.success,
+    status: !summary.success ? "failed" : gaps.length > 0 ? "passed-with-gaps" : "passed",
+    gaps,
     summary: {
       totalFiles: summary.totalFiles,
       totalErrors: summary.totalErrors,
@@ -73,6 +83,7 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
     })),
     bySource: {},
     diagnostics: summary.diagnostics ?? [],
+    runners: summary.runners ?? [],
   };
 
   // Group by source

@@ -1,32 +1,59 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-import { execCommand, findNpmBinary } from "../../utils/process";
+import { execCommand, findBinary, type ExecResult } from "../../utils/process";
+import { findConfigFile, TYPESCRIPT_CONFIG_FILES } from "../../utils/tool-configs";
 import type { CheckResult } from "../types";
-import type { Runner, RunnerOptions, RunnerResult } from "./types";
+import {
+  DEFAULT_RUNNER_TIMEOUT_MS,
+  runnerFailure,
+  type Runner,
+  type RunnerAvailability,
+  type RunnerOptions,
+  type RunnerResult,
+} from "./types";
+
+// file(line,col): error TSxxxx: message
+const LOCATED_DIAGNOSTIC = /^(.+?)\((\d+),(\d+)\):\s*(error|warning)\s+(TS\d+):\s*(.*)$/;
+// error TSxxxx: message (global diagnostics such as TS18003 "No inputs were found")
+const GLOBAL_DIAGNOSTIC = /^(error|warning)\s+(TS\d+):\s*(.*)$/;
 
 /**
- * Parse TypeScript compiler output
+ * Parse `tsc --pretty false` output. Indented continuation lines are appended
+ * to the preceding diagnostic's message.
  */
-function parseTypeScriptOutput(output: string): CheckResult[] {
+export function parseTypeScriptOutput(output: string): CheckResult[] {
   const results: CheckResult[] = [];
-  const lines = output.split("\n");
 
-  // TypeScript error format: file(line,col): error TSxxxx: message
-  const errorRegex = /^(.+?)\((\d+),(\d+)\):\s*(error|warning)\s+(TS\d+):\s*(.+)$/;
-
-  for (const line of lines) {
-    const match = line.match(errorRegex);
-    if (match) {
-      const [, file, lineNum, col, severity, code, message] = match;
+  for (const line of output.split(/\r?\n/)) {
+    const located = LOCATED_DIAGNOSTIC.exec(line);
+    if (located) {
+      const [, file, lineNumber, column, severity, code, message] = located;
       results.push({
-        file: file.trim(),
-        line: parseInt(lineNum, 10),
-        column: parseInt(col, 10),
+        file: file!.trim(),
+        line: Number.parseInt(lineNumber!, 10),
+        column: Number.parseInt(column!, 10),
         rule: `typescript/${code}`,
-        message: message.trim(),
+        message: message!.trim(),
         severity: severity === "error" ? "error" : "warning",
         source: "typescript",
       });
+      continue;
+    }
+
+    const global = GLOBAL_DIAGNOSTIC.exec(line.trim());
+    if (global) {
+      const [, severity, code, message] = global;
+      results.push({
+        file: "tsconfig.json",
+        rule: `typescript/${code}`,
+        message: message!.trim(),
+        severity: severity === "error" ? "error" : "warning",
+        source: "typescript",
+      });
+      continue;
+    }
+
+    const previous = results[results.length - 1];
+    if (previous && /^\s+\S/.test(line)) {
+      previous.message = `${previous.message}\n${line.trim()}`;
     }
   }
 
@@ -34,62 +61,87 @@ function parseTypeScriptOutput(output: string): CheckResult[] {
 }
 
 /**
+ * Turn a finished tsc process into a runner result. Fails closed: a non-zero exit
+ * without parseable diagnostics is an error, never a pass.
+ */
+export function interpretTypeScriptRun(execResult: ExecResult, command: string): RunnerResult {
+  const results = parseTypeScriptOutput(`${execResult.stdout}\n${execResult.stderr}`);
+
+  if (execResult.exitCode !== 0 && results.length === 0) {
+    const reason = execResult.timedOut
+      ? "tsc timed out"
+      : execResult.spawnError
+        ? `tsc could not be started: ${execResult.spawnError}`
+        : `tsc exited with code ${execResult.exitCode} without reporting any diagnostics`;
+    return {
+      source: "typescript",
+      results: [
+        runnerFailure({
+          source: "typescript",
+          message: reason,
+          command,
+          exitCode: execResult.exitCode,
+          stdout: execResult.stdout,
+          stderr: execResult.stderr,
+          file: "tsconfig.json",
+        }),
+      ],
+      success: false,
+      error: reason,
+    };
+  }
+
+  return {
+    source: "typescript",
+    results,
+    success: results.every((result) => result.severity !== "error"),
+  };
+}
+
+/**
  * TypeScript runner - runs tsc --noEmit
  */
 export const typescriptRunner: Runner = {
   name: "typescript",
+  label: "TypeScript",
+
+  detect(cwd: string): RunnerAvailability {
+    if (!findConfigFile(cwd, TYPESCRIPT_CONFIG_FILES)) {
+      return { available: false, reason: "no tsconfig.json in the project root" };
+    }
+    const binary = findBinary("tsc", cwd);
+    if (!binary) {
+      return {
+        available: false,
+        reason: "tsconfig.json found, but no tsc binary (install typescript; looked in node_modules/.bin and PATH)",
+      };
+    }
+    return { available: true, binary };
+  },
 
   async isAvailable(cwd: string): Promise<boolean> {
-    // Check for tsconfig.json
-    const tsconfigPath = join(cwd, "tsconfig.json");
-    if (!existsSync(tsconfigPath)) {
-      return false;
-    }
-
-    // Check for tsc binary
-    const tscPath = await findNpmBinary("tsc", cwd);
-    return tscPath !== null;
+    return this.detect(cwd).available;
   },
 
   async run(options: RunnerOptions): Promise<RunnerResult> {
     const { cwd, config } = options;
-
-    if (config?.enabled === false) {
+    const binary = options.binary ?? findBinary("tsc", cwd);
+    if (!binary) {
       return {
         source: "typescript",
         results: [],
         success: true,
         skipped: true,
+        skipReason: "no tsc binary found",
       };
     }
 
-    const tscPath = await findNpmBinary("tsc", cwd);
-    if (!tscPath) {
-      return {
-        source: "typescript",
-        results: [],
-        success: false,
-        error: "TypeScript compiler (tsc) not found",
-      };
-    }
+    const args = ["--noEmit", "--pretty", "false", ...(config?.args ?? [])];
+    const execResult = await execCommand(binary, args, {
+      cwd,
+      timeout: options.timeoutMs ?? DEFAULT_RUNNER_TIMEOUT_MS,
+    });
 
-    const args = ["--noEmit", "--pretty", "false"];
-
-    // Add any custom args from config
-    if (config?.args) {
-      args.push(...config.args);
-    }
-
-    const result = await execCommand(tscPath, args, { cwd });
-
-    // tsc returns non-zero on errors
-    const combined = result.stdout + result.stderr;
-    const results = parseTypeScriptOutput(combined);
-
-    return {
-      source: "typescript",
-      results,
-      success: results.filter((r) => r.severity === "error").length === 0,
-    };
+    return interpretTypeScriptRun(execResult, ["tsc", ...args].join(" "));
   },
 };

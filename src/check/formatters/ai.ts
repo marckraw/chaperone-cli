@@ -1,4 +1,5 @@
 import type { CheckResult, CheckSummary } from "../types";
+import { describeDiagnostic, describeRunner, statusLine } from "./shared";
 
 export interface AIFormatOptions {
   /** List only errors (counts still include warnings) */
@@ -88,22 +89,29 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
   lines.push("");
 
   // Status summary - clear and concise for LLM parsing
-  const status = summary.success ? "PASSED" : "FAILED";
-  lines.push(`**Status:** ${status}`);
+  lines.push(`**Status:** ${statusLine(summary)}`);
   lines.push(`**Files checked:** ${summary.totalFiles}`);
   lines.push(`**Errors:** ${summary.totalErrors}`);
   lines.push(`**Warnings:** ${summary.totalWarnings}`);
   lines.push(`**Duration:** ${(summary.duration / 1000).toFixed(2)}s`);
   lines.push("");
 
+  const runners = summary.runners ?? [];
+  if (runners.length > 0) {
+    lines.push("### Tools");
+    lines.push("");
+    for (const runner of runners) {
+      lines.push(`- ${runner.label}: ${describeRunner(runner)}`);
+    }
+    lines.push("");
+  }
+
   const configWarnings = (summary.diagnostics ?? []).filter((d) => d.level === "warning");
   if (configWarnings.length > 0) {
     lines.push("### Configuration Warnings");
     lines.push("");
     for (const diagnostic of configWarnings) {
-      const location = [diagnostic.source, diagnostic.path].filter(Boolean).join(" › ");
-      const rule = diagnostic.ruleId ? ` (rule \`${diagnostic.ruleId}\`)` : "";
-      lines.push(`- ${location}${rule}: ${diagnostic.message}`);
+      lines.push(`- ${describeDiagnostic(diagnostic)}`);
     }
     lines.push("");
   }

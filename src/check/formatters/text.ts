@@ -1,5 +1,14 @@
 import { createPalette, type Palette } from "../../utils/ansi";
 import type { CheckResult, CheckSummary } from "../types";
+import {
+  describeDiagnostic,
+  describeRunner,
+  formatDuration,
+  formatLocation,
+  groupBySource,
+  orderedSources,
+  statusLine,
+} from "./shared";
 
 export interface TextFormatOptions {
   /** List only errors (counts still include warnings) */
@@ -19,12 +28,8 @@ function formatResult(result: CheckResult, colors: Palette): string {
       ? `${colors.red}ERROR${colors.reset}`
       : `${colors.yellow}WARNING${colors.reset}`;
 
-  const location = result.line
-    ? `${result.file}:${result.line}${result.column ? `:${result.column}` : ""}`
-    : result.file;
-
   const lines = [
-    `  ${colors.dim}${location}${colors.reset}`,
+    `  ${colors.dim}${formatLocation(result)}${colors.reset}`,
     `    ${severity}: ${result.message}`,
     `    ${colors.dim}Rule: ${result.rule}${colors.reset}`,
   ];
@@ -82,23 +87,6 @@ function formatResult(result: CheckResult, colors: Palette): string {
 }
 
 /**
- * Group results by source
- */
-function groupBySource(results: CheckResult[]): Record<string, CheckResult[]> {
-  const groups: Record<string, CheckResult[]> = {};
-
-  for (const result of results) {
-    const source = result.source ?? "unknown";
-    if (!groups[source]) {
-      groups[source] = [];
-    }
-    groups[source].push(result);
-  }
-
-  return groups;
-}
-
-/**
  * Format check results as human-readable text
  */
 export function formatText(summary: CheckSummary, options: TextFormatOptions = {}): string {
@@ -107,11 +95,10 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
   const lines: string[] = [];
 
   // Header
-  const statusColor = summary.success ? colors.green : colors.red;
-  const statusText = summary.success ? "PASSED" : "FAILED";
-
+  const status = statusLine(summary);
+  const statusColor = !summary.success ? colors.red : status === "PASSED" ? colors.green : colors.yellow;
   lines.push("");
-  lines.push(`${colors.bold}Chaperone Check${colors.reset} - ${statusColor}${statusText}${colors.reset}`);
+  lines.push(`${colors.bold}Chaperone Check${colors.reset} - ${statusColor}${status}${colors.reset}`);
   lines.push("");
 
   // Summary stats
@@ -124,47 +111,51 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
       `${colors.dim}Warnings:${colors.reset} ${summary.totalWarnings > 0 ? colors.yellow : colors.green}${summary.totalWarnings}${colors.reset}`
     );
   }
-  lines.push(`${colors.dim}Duration:${colors.reset} ${(summary.duration / 1000).toFixed(2)}s`);
+  lines.push(`${colors.dim}Duration:${colors.reset} ${formatDuration(summary.duration)}`);
   lines.push("");
 
-  // Configuration warnings
-  const configWarnings = (summary.diagnostics ?? []).filter((d) => d.level === "warning");
-  if (configWarnings.length > 0) {
-    lines.push(`${colors.bold}Configuration warnings:${colors.reset}`);
-    for (const diagnostic of configWarnings) {
-      const location = [diagnostic.source, diagnostic.path].filter(Boolean).join(" › ");
-      const rule = diagnostic.ruleId ? ` (rule "${diagnostic.ruleId}")` : "";
-      lines.push(`  ${colors.yellow}!${colors.reset} ${location}${rule}: ${diagnostic.message}`);
+  // What each tool did, including why it did not run
+  const runners = summary.runners ?? [];
+  if (runners.length > 0) {
+    lines.push(`${colors.bold}Tools:${colors.reset}`);
+    for (const runner of runners) {
+      const icon =
+        runner.status === "passed"
+          ? `${colors.green}✓${colors.reset}`
+          : runner.status === "skipped"
+            ? `${colors.yellow}○${colors.reset}`
+            : `${colors.red}✗${colors.reset}`;
+      lines.push(`  ${icon} ${runner.label.padEnd(10)} ${describeRunner(runner)}`);
     }
     lines.push("");
   }
 
-  // Per-tool breakdown
-  const grouped = groupBySource(summary.results);
-  const toolStats: string[] = [];
-  const sourceOrder = ["typescript", "eslint", "prettier", "custom", "ai-instructions"];
-
-  for (const source of sourceOrder) {
-    const results = grouped[source];
-    if (!results || results.length === 0) {
-      continue;
+  // Configuration warnings
+  const configWarnings = (summary.diagnostics ?? []).filter((diagnostic) => diagnostic.level === "warning");
+  if (configWarnings.length > 0) {
+    lines.push(`${colors.bold}Configuration warnings:${colors.reset}`);
+    for (const diagnostic of configWarnings) {
+      lines.push(`  ${colors.yellow}!${colors.reset} ${describeDiagnostic(diagnostic)}`);
     }
+    lines.push("");
+  }
 
+  // Per-source breakdown
+  const grouped = groupBySource(summary.results);
+  const sources = orderedSources(grouped);
+  const toolStats: string[] = [];
+
+  for (const source of sources) {
+    const results = grouped[source] ?? [];
     const errors = results.filter((r) => r.severity === "error").length;
     const warnings = results.filter((r) => r.severity === "warning").length;
     const label = getSourceLabel(source).replace(/ (Errors|Issues|Formatting|Violations|Rule Violations)$/, "");
 
-    if (noWarnings) {
-      if (errors > 0) {
-        toolStats.push(`${label}: ${colors.red}${errors} errors${colors.reset}`);
-      }
-    } else {
-      const parts: string[] = [];
-      if (errors > 0) parts.push(`${colors.red}${errors} errors${colors.reset}`);
-      if (warnings > 0) parts.push(`${colors.yellow}${warnings} warnings${colors.reset}`);
-      if (parts.length > 0) {
-        toolStats.push(`${label}: ${parts.join(", ")}`);
-      }
+    const parts: string[] = [];
+    if (errors > 0) parts.push(`${colors.red}${errors} errors${colors.reset}`);
+    if (warnings > 0 && !noWarnings) parts.push(`${colors.yellow}${warnings} warnings${colors.reset}`);
+    if (parts.length > 0) {
+      toolStats.push(`${label}: ${parts.join(", ")}`);
     }
   }
 
@@ -174,7 +165,6 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
       lines.push(`  ${stat}`);
     }
     lines.push("");
-
   }
 
   // If quiet mode and no errors, stop here
@@ -185,21 +175,17 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
   // Filter to only errors in quiet mode or noWarnings mode
   const resultFilter = quiet || noWarnings ? (r: CheckResult) => r.severity === "error" : () => true;
 
-  // Output by source (reuse sourceOrder from above)
-  for (const source of sourceOrder) {
+  for (const source of sources) {
     const results = grouped[source]?.filter(resultFilter);
     if (!results || results.length === 0) {
       continue;
     }
 
-    const sourceLabel = getSourceLabel(source);
     const errorCount = results.filter((r) => r.severity === "error").length;
     const warningCount = results.filter((r) => r.severity === "warning").length;
 
-    const countInfo = noWarnings
-      ? `${errorCount} errors`
-      : `${errorCount} errors, ${warningCount} warnings`;
-    lines.push(`${colors.bold}${sourceLabel}${colors.reset} (${countInfo})`);
+    const countInfo = noWarnings ? `${errorCount} errors` : `${errorCount} errors, ${warningCount} warnings`;
+    lines.push(`${colors.bold}${getSourceLabel(source)}${colors.reset} (${countInfo})`);
     lines.push("");
 
     for (const result of results) {

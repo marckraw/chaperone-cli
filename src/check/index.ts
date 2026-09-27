@@ -14,9 +14,10 @@ export { runAllRules } from "./rules";
 export { format, formatText, formatJson, formatAI } from "./formatters";
 
 /**
- * Progress callback for reporting check progress
+ * Progress callback for reporting check progress.
+ * Steps can overlap: tool runners and custom rules run concurrently.
  */
-export type ProgressCallback = (step: string, status: "start" | "done" | "skipped") => void;
+export type ProgressCallback = (step: string, status: "start" | "done" | "skipped" | "failed") => void;
 
 /**
  * Debug callback for detailed output
@@ -33,6 +34,8 @@ export interface CheckOptionsWithProgress extends CheckOptions {
 
 /**
  * Main check function - orchestrates all checks
+ *
+ * @throws {ConfigError} when the configuration is invalid
  */
 export async function check(options: CheckOptionsWithProgress): Promise<CheckSummary> {
   const startTime = Date.now();
@@ -49,39 +52,24 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   // Walk the tree once; every rule shares this index and its content cache
   onProgress?.("Scanning files", "start");
   const context = createRuleContext(cwd, patterns.exclude);
-  const allFiles = countFilesToCheck(context.index, patterns.include);
+  const totalFiles = countFilesToCheck(context.index, patterns.include);
   onProgress?.("Scanning files", "done");
 
-  // Run TypeScript
-  onProgress?.("Running TypeScript", "start");
-  const toolResults = await runAllTools(config, {
+  // Start the tool runners; they run concurrently with each other and with the rules
+  const toolsPromise = runAllTools(config, {
     cwd,
     fix,
+    onRunner: (runner, status) => onProgress?.(runner.label, status),
   });
 
-  // Report tool results
-  if (toolResults.bySource.typescript?.skipped) {
-    onProgress?.("Running TypeScript", "skipped");
-  } else {
-    onProgress?.("Running TypeScript", "done");
+  // --fix rewrites files, so rules must wait for the fixers to finish
+  if (fix) {
+    await toolsPromise;
   }
 
-  if (toolResults.bySource.eslint?.skipped) {
-    onProgress?.("Running ESLint", "skipped");
-  } else {
-    onProgress?.("Running ESLint", "start");
-    onProgress?.("Running ESLint", "done");
-  }
-
-  if (toolResults.bySource.prettier?.skipped) {
-    onProgress?.("Running Prettier", "skipped");
-  } else {
-    onProgress?.("Running Prettier", "start");
-    onProgress?.("Running Prettier", "done");
-  }
-
-  // Run all custom rules
-  onProgress?.("Checking custom rules", "start");
+  const customRules = config.rules?.custom ?? [];
+  const rulesStep = `Custom rules (${customRules.length})`;
+  onProgress?.(rulesStep, customRules.length === 0 ? "skipped" : "start");
   const ruleResults = await runAllRules(config, {
     cwd,
     include: patterns.include,
@@ -89,12 +77,17 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     onDebug,
     context,
   });
+  if (customRules.length > 0) {
+    onProgress?.(rulesStep, "done");
+  }
 
-  const customRulesCount = config.rules?.custom?.length ?? 0;
-  if (customRulesCount === 0) {
-    onProgress?.("Checking custom rules", "skipped");
-  } else {
-    onProgress?.("Checking custom rules", "done");
+  const toolResults = await toolsPromise;
+  for (const runner of toolResults.summaries) {
+    onDebug?.(
+      `Tool ${runner.name}: ${runner.status}${runner.reason ? ` (${runner.reason})` : ""}${
+        runner.durationMs !== undefined ? ` in ${runner.durationMs}ms` : ""
+      }`
+    );
   }
 
   // Combine results
@@ -105,7 +98,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   const totalWarnings = allResults.filter((r) => r.severity === "warning").length;
 
   const summary: CheckSummary = {
-    totalFiles: allFiles,
+    totalFiles,
     totalErrors,
     totalWarnings,
     duration: Date.now() - startTime,
@@ -113,6 +106,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     results: allResults,
     bySource: groupBySource(allResults),
     diagnostics,
+    runners: toolResults.summaries,
   };
 
   return summary;

@@ -43,6 +43,21 @@ export interface ConfigDiagnostic {
 }
 
 /**
+ * What happened to one tool runner (TypeScript, ESLint, Prettier) during a check.
+ */
+export interface RunnerSummary {
+  name: string;
+  label: string;
+  /** passed/failed: ran and parsed; skipped: did not run (see reason); error: ran but could not be trusted */
+  status: "passed" | "failed" | "skipped" | "error";
+  /** Why it was skipped, or what went wrong */
+  reason?: string;
+  durationMs?: number;
+  errors: number;
+  warnings: number;
+}
+
+/**
  * Summary of check results
  */
 export interface CheckSummary {
@@ -55,6 +70,8 @@ export interface CheckSummary {
   bySource: Record<string, CheckResult[]>;
   /** Configuration warnings (unknown fields, deprecated options, ...) */
   diagnostics?: ConfigDiagnostic[];
+  /** What each tool runner did, including why it was skipped */
+  runners?: RunnerSummary[];
 }
 
 /**
