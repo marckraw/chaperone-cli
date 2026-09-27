@@ -57,7 +57,7 @@ export async function runForbiddenImportRule(
 
           if (sourceRegex.test(imp.source)) {
             // Check if this file is in the allowedIn list
-            const isAllowed = restriction.allowedIn.some((glob) =>
+            const isAllowed = (restriction.allowedIn ?? []).some((glob) =>
               matchGlob(file, glob)
             );
             if (!isAllowed) {
@@ -105,7 +105,7 @@ export async function runForbiddenImportRule(
         let patternMatch: RegExpExecArray | null;
 
         while ((patternMatch = globalRegex.exec(content)) !== null) {
-          const isAllowed = checkPattern.allowedIn.some((glob) =>
+          const isAllowed = (checkPattern.allowedIn ?? []).some((glob) =>
             matchGlob(file, glob)
           );
           if (!isAllowed) {

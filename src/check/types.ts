@@ -28,6 +28,21 @@ export interface CheckResult {
 }
 
 /**
+ * A problem found in the configuration itself (not in the code being checked).
+ * Errors stop the run (exit code 2); warnings are reported alongside the results.
+ */
+export interface ConfigDiagnostic {
+  level: "error" | "warning";
+  /** Where the problem is: a config file path relative to cwd, or a built-in preset name */
+  source: string;
+  /** JSON path inside the source, e.g. "rules.custom[2].severity" */
+  path?: string;
+  /** Id of the rule the problem belongs to, when known */
+  ruleId?: string;
+  message: string;
+}
+
+/**
  * Summary of check results
  */
 export interface CheckSummary {
@@ -38,6 +53,8 @@ export interface CheckSummary {
   success: boolean;
   results: CheckResult[];
   bySource: Record<string, CheckResult[]>;
+  /** Configuration warnings (unknown fields, deprecated options, ...) */
+  diagnostics?: ConfigDiagnostic[];
 }
 
 /**
@@ -137,6 +154,8 @@ export interface RegexRule extends BaseRule, AIGeneratedMetadata {
   message: string;
   mustMatch?: boolean; // true = must exist, false = must NOT exist (default)
   reportOnce?: boolean; // true = report only first match per file (useful for file-level rules like "must use .tsx")
+  /** @deprecated Use mustMatch. `forbidden: true` means `mustMatch: false`. Normalized away at load time. */
+  forbidden?: boolean;
 }
 
 /**
@@ -144,7 +163,7 @@ export interface RegexRule extends BaseRule, AIGeneratedMetadata {
  */
 export interface PackageFieldsRule extends BaseRule, AIGeneratedMetadata {
   type: "package-fields";
-  requiredFields: string[]; // Fields that must exist (supports dot notation: "scripts.build")
+  requiredFields?: string[]; // Fields that must exist (supports dot notation: "scripts.build")
   forbiddenFields?: string[]; // Fields that must NOT exist
   fieldPatterns?: Record<string, string>; // Field value must match regex pattern
   message?: string;
@@ -225,14 +244,14 @@ export interface RetiredPathRule extends BaseRule, AIGeneratedMetadata {
 export interface ForbiddenImportRule extends BaseRule, AIGeneratedMetadata {
   type: "forbidden-import";
   files: string; // Glob for files to scan
-  restrictions: Array<{
+  restrictions?: Array<{
     source: string; // Regex matching import source
-    allowedIn: string[]; // Globs for files where this import IS allowed
+    allowedIn?: string[]; // Globs for files where this import IS allowed (default: nowhere)
     message?: string;
   }>;
   checkPatterns?: Array<{
     pattern: string; // Regex matching code usage (e.g., "\\binvoke\\(")
-    allowedIn: string[];
+    allowedIn?: string[]; // default: nowhere
     message?: string;
   }>;
   includeTypeImports?: boolean; // default: false (type imports are safe)
@@ -307,7 +326,7 @@ export type AIInstructionsRule = RegexRule;
  * Tool runner configuration
  */
 export interface ToolConfig {
-  enabled: boolean;
+  enabled?: boolean;
   extensions?: string[];
   args?: string[];
 }

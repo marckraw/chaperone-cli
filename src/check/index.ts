@@ -1,4 +1,4 @@
-import { loadConfig, getEffectivePatterns } from "./config-loader";
+import { loadConfigWithDiagnostics, getEffectivePatterns } from "./config-loader";
 import { runAllTools } from "./runners";
 import { runAllRules } from "./rules";
 import { format, type OutputFormat } from "./formatters";
@@ -8,6 +8,7 @@ import type { FileIndex } from "../utils/file-index";
 
 export * from "./types";
 export * from "./config-loader";
+export { formatDiagnostic, validateRule, RULE_TYPES, REMOVED_RULE_TYPES } from "./config-schema";
 export { runAllTools } from "./runners";
 export { runAllRules } from "./rules";
 export { format, formatText, formatJson, formatAI } from "./formatters";
@@ -37,9 +38,9 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   const startTime = Date.now();
   const { cwd, configPath, fix, include, exclude, onProgress, onDebug } = options;
 
-  // Load configuration
+  // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
-  const config = loadConfig(cwd, configPath);
+  const { config, diagnostics } = loadConfigWithDiagnostics(cwd, configPath);
   onProgress?.("Loading configuration", "done");
 
   // Get effective include/exclude patterns
@@ -111,6 +112,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     success: totalErrors === 0,
     results: allResults,
     bySource: groupBySource(allResults),
+    diagnostics,
   };
 
   return summary;

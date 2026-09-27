@@ -2,7 +2,7 @@
 
 import { VERSION } from "./version";
 import { runInit } from "./init";
-import { checkAndFormat, createCheckOptions } from "./check";
+import { checkAndFormat, createCheckOptions, ConfigError, formatDiagnostic } from "./check";
 import { formatAI } from "./check/formatters";
 import type { OutputFormat } from "./check/formatters";
 import { copyToClipboard } from "./utils/clipboard";
@@ -235,9 +235,17 @@ async function runCheck(args: string[]): Promise<number> {
     return summary.success ? 0 : 1;
   } catch (error) {
     spinner.stop();
+    if (error instanceof ConfigError) {
+      const errors = error.diagnostics.filter((diagnostic) => diagnostic.level === "error");
+      console.error(`Invalid configuration (${errors.length} error${errors.length === 1 ? "" : "s"}):`);
+      for (const diagnostic of error.diagnostics) {
+        console.error(`  ${diagnostic.level === "error" ? "error" : "warning"}: ${formatDiagnostic(diagnostic)}`);
+      }
+      return 2;
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
-    return 1;
+    return 2;
   }
 }
 
