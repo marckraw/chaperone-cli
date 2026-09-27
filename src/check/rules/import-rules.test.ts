@@ -188,3 +188,24 @@ describe("forbidden-import", () => {
     expect(result.results.map((entry) => [entry.file, entry.line])).toEqual([["src/b.ts", 1]]);
   });
 });
+
+describe("import-boundary layer overlap", () => {
+  test("notes a layer whose files all belong to a later layer", async () => {
+    const cwd = makeProject({ "src/check/rules/types.ts": "", "src/check/rules/regex.ts": "" });
+    const result = await runImportBoundaryRule(
+      {
+        type: "import-boundary",
+        id: "overlap",
+        severity: "error",
+        layers: {
+          "rule-types": { files: "src/check/rules/types.ts", allowImportsFrom: [] },
+          rules: { files: "src/check/rules/*.ts", allowImportsFrom: [] },
+        },
+      },
+      { cwd, include: [], exclude: [] }
+    );
+    expect(result.notices).toEqual([
+      "layers whose files all match a later layer (the layer listed last wins): rule-types",
+    ]);
+  });
+});

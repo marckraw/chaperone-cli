@@ -39,6 +39,17 @@ export async function runImportBoundaryRule(
     notices.push(`layers with no matching files: ${emptyLayers.join(", ")}`);
   }
 
+  // A layer whose files all belong to a later, overlapping layer enforces nothing
+  const assigned = new Set(fileToLayer.values());
+  const shadowed = Object.entries(rule.layers)
+    .filter(([layerName, layerConfig]) => !assigned.has(layerName) && index.glob(layerConfig.files, rule.exclude ?? []).length > 0)
+    .map(([layerName]) => layerName);
+  if (shadowed.length > 0) {
+    notices.push(
+      `layers whose files all match a later layer (the layer listed last wins): ${shadowed.join(", ")}`
+    );
+  }
+
   // Step 2: For each file in any layer, check its imports
   for (const [file, sourceLayer] of fileToLayer.entries()) {
     const allowedLayers = new Set(rule.layers[sourceLayer]?.allowImportsFrom ?? []);

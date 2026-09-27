@@ -133,7 +133,7 @@ describe("package-fields", () => {
 
   test("checks required, forbidden and patterned fields", async () => {
     const cwd = makeProject({
-      "package.json": JSON.stringify({ name: "x", private: true, scripts: { build: "npm run x" } }),
+      "package.json": JSON.stringify({ name: "x", private: true, scripts: { build: "make x" } }),
     });
     const result = await runPackageFieldsRule(RULE, { cwd, ...OPTIONS });
     expect(result.results.map((entry) => entry.message)).toEqual([
