@@ -130,14 +130,23 @@ Paste this into a coding agent working in a repository that uses Chaperone:
 ```text
 This repository uses Chaperone (a CLI that checks repo conventions from .chaperone.json).
 Chaperone 0.8 now validates its configuration and reports problems it used to hide.
-Upgrade our configuration so `chaperone check` runs cleanly and honestly. Do not delete
-rules or loosen them just to make the check pass.
+Upgrade Chaperone and our configuration so `chaperone check` runs cleanly and honestly.
+Do not delete rules or loosen them just to make the check pass.
 
-1. Run `chaperone --version` (must be 0.8.0 or later), then
+1. Upgrade Chaperone itself to 0.8.0 everywhere this repository pins it:
+   - Find the pins: `grep -rn -i chaperone .github package.json scripts 2>/dev/null`.
+     Look for things like `CHAPERONE_VERSION: v0.7.1` in CI workflows or a version
+     constant in a download script, and set each one to 0.8.0 in the same format
+     (release URLs use the tag, `v0.8.0`).
+   - If `chaperone --version` on this machine is older than 0.8.0, install 0.8.0:
+     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.8.0 sh`
+     The script verifies the checksum. It replaces the binary for every repository on
+     this machine, so mention the upgrade in your summary.
+2. Run `chaperone --version` (must be 0.8.0 or later), then
    `chaperone check --format json > /tmp/chaperone.json; echo "exit=$?"`.
    Exit code 2 = the configuration is invalid (nothing was checked);
    1 = real violations; 0 = passed.
-2. If the exit code is 2, read `.diagnostics` in /tmp/chaperone.json (or the stderr
+3. If the exit code is 2, read `.diagnostics` in /tmp/chaperone.json (or the stderr
    output) and fix every error in .chaperone.json and in any local preset it extends:
    - Rule types `relationship`, `file-naming`, `file-structure`, `file-suffix-content`
      were removed. Rewrite them: companion files -> `file-pairing` with
@@ -150,26 +159,27 @@ rules or loosen them just to make the check pass.
      and allowImportsFrom).
    - An override of a preset rule replaces the whole rule: copy all its fields, or
      use `{ "id": "...", "disabled": true }` to switch it off.
-3. Fix warnings: replace `"forbidden": true` with `"mustMatch": false` (or drop it),
+4. Fix warnings: replace `"forbidden": true` with `"mustMatch": false` (or drop it),
    fix unknown fields (follow the "did you mean" hint), and rewrite regex patterns
    that can match an empty string.
-4. Regex rules now match ^ and $ per line (default flags "m"). For rules that relied
+5. Regex rules now match ^ and $ per line (default flags "m"). For rules that relied
    on ^ meaning "start of file" (usually mustMatch: true header checks), add
    `"flags": ""`.
-5. Excludes are now merged with the defaults (node_modules, .git, /dist, /build) and
+6. Excludes are now merged with the defaults (node_modules, .git, /dist, /build) and
    follow .gitignore rules: a bare name matches at any depth, a leading "/" anchors
    to the project root, "!" re-includes. Remove entries that only repeated the
    defaults, and check that nothing we want checked is excluded.
-6. Look at `.rules[] | select(.status == "no-files")` and `.runners[] |
-   select(.status != "passed")` in the JSON. Fix globs that match nothing (usually
-   typos or moved directories); explain any tool that is skipped on purpose.
-7. Run `chaperone check --format ai` and fix the reported violations in the code.
+7. Read `.gaps` in the JSON: everything that was not checked. Then look at
+   `.rules[] | select(.status == "no-files")` and `.runners[] |
+   select(.status != "passed")`. Fix globs that match nothing (usually typos or
+   moved directories); explain any tool that is skipped on purpose.
+8. Run `chaperone check --format ai` and fix the reported violations in the code.
    import-boundary and public-api now resolve tsconfig aliases such as "@/...", so
    boundary violations hidden behind aliases will appear: fix the imports, do not
    weaken the layers. If a rule truly cannot be satisfied yet, set its severity to
    "warning" and say so in your summary.
-8. Update scripts or CI steps that treated exit code 1 as "chaperone failed to run":
+9. Update scripts or CI steps that treated exit code 1 as "chaperone failed to run":
    exit code 2 now means configuration/usage errors.
-9. Finish with `chaperone check` exiting 0 and report what you changed, which
-   warnings remain, and anything reported as skipped or "matched no files".
+10. Finish with `chaperone check` exiting 0 and report what you changed, which
+    warnings remain, and anything reported as skipped or "matched no files".
 ```
