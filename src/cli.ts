@@ -10,7 +10,8 @@ import { createSpinner } from "./utils/spinner";
 import { createPalette, shouldUseColor } from "./utils/ansi";
 import { EXIT, parseArgs, UsageError, type FlagSpec } from "./utils/args";
 import { runAnalyze } from "./analyze";
-import { getUpdateNotification, refreshUpdateCache } from "./update-notifier";
+import { GitError } from "./utils/git";
+import { getUpdateNotification, isUpdateCheckDisabled, refreshUpdateCache } from "./update-notifier";
 
 const HELP_TEXT = `
 chaperone v${VERSION} - Code enforcer CLI
@@ -35,6 +36,8 @@ CHECK OPTIONS:
   --copy                Copy remaining errors to clipboard (AI format)
   --no-progress         Disable progress spinner
   --debug               Show detailed rule execution info (stderr)
+  --since <git-ref>     Custom rules only check files changed since <git-ref>
+                        (merge base with HEAD, plus uncommitted and untracked files)
 
 GENERAL OPTIONS:
   --help, -h            Show help
@@ -78,6 +81,9 @@ OPTIONS:
   --copy                Copy remaining errors to clipboard (AI format)
   --no-progress         Disable progress spinner
   --debug               Show detailed rule execution info (stderr)
+  --since <git-ref>     Custom rules only check files changed since <git-ref>
+                        (merge base with HEAD, plus uncommitted and untracked files);
+                        TypeScript, ESLint and Prettier still check the whole project
   --help, -h            Show this help message
 
 OUTPUT:
@@ -109,6 +115,7 @@ const CHECK_FLAGS = {
   noProgress: { names: ["--no-progress"], type: "boolean" },
   noWarnings: { names: ["--no-warnings"], type: "boolean" },
   debug: { names: ["--debug"], type: "boolean" },
+  since: { names: ["--since"], type: "string" },
 } satisfies Record<string, FlagSpec>;
 
 function printConfigError(error: ConfigError, format: OutputFormat): number {
@@ -188,6 +195,7 @@ async function runCheck(args: string[]): Promise<number> {
     noWarnings: parsedArgs.noWarnings ?? false,
     debug: parsedArgs.debug ?? false,
     color: format === "text" && shouldUseColor(process.stdout),
+    since: parsedArgs.since,
     onProgress: showProgress
       ? (step, status) => {
           if (status === "start") {
@@ -249,6 +257,13 @@ async function runCheck(args: string[]): Promise<number> {
     if (error instanceof ConfigError) {
       return printConfigError(error, format);
     }
+    if (error instanceof GitError) {
+      console.error(`Error: ${error.message}`);
+      if (format === "json") {
+        console.log(JSON.stringify({ success: false, error: "usage", exitCode: EXIT.ERROR, message: error.message }, null, 2));
+      }
+      return EXIT.ERROR;
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
     if (format === "json") {
@@ -264,14 +279,15 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const command = args[0];
 
-  // Instant: read cached update check
+  // Update check: instant cached notice + fire-and-forget refresh for the next run.
+  // Disabled with CHAPERONE_NO_UPDATE_CHECK=1 (and on CI).
   let updateNotice: string | null = null;
-  try {
-    updateNotice = getUpdateNotification();
-  } catch {}
-
-  // Fire-and-forget: refresh cache for next run
-  refreshUpdateCache().catch(() => {});
+  if (!isUpdateCheckDisabled(process.env)) {
+    try {
+      updateNotice = getUpdateNotification();
+    } catch {}
+    refreshUpdateCache().catch(() => {});
+  }
 
   let exitCode: number = EXIT.OK;
 

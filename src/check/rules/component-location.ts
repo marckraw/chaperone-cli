@@ -111,13 +111,14 @@ export async function runComponentLocationRule(
   rule: ComponentLocationRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
   // Find all component files
   const files = index.glob(rule.files, rule.exclude ?? []);
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
       continue;

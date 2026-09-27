@@ -50,8 +50,10 @@ export async function runImportBoundaryRule(
     );
   }
 
-  // Step 2: For each file in any layer, check its imports
+  // Step 2: For each file in any layer, check its imports (layer membership uses every file)
+  const inScope = new Set(context.inScope([...fileToLayer.keys()]));
   for (const [file, sourceLayer] of fileToLayer.entries()) {
+    if (!inScope.has(file)) continue;
     const allowedLayers = new Set(rule.layers[sourceLayer]?.allowImportsFrom ?? []);
 
     for (const entry of context.imports(file)) {

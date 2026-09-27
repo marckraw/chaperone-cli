@@ -95,6 +95,8 @@ export interface CheckSummary {
   rules?: RuleSummary[];
   /** Rules switched off with `disabled: true` */
   disabledRules?: Array<{ id: string; source: string }>;
+  /** Set when custom rules were limited to files changed since a git ref (`--since`) */
+  since?: { ref: string; changedFiles: number };
 }
 
 /**
@@ -112,6 +114,8 @@ export interface CheckOptions {
   debug?: boolean;
   /** ANSI colours in text output (default: false) */
   color?: boolean;
+  /** Limit file-scoped custom rules to files changed since this git ref */
+  since?: string;
 }
 
 /**

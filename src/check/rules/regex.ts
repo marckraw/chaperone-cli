@@ -24,7 +24,8 @@ export async function runRegexRule(
   rule: RegexRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
   // Find files matching the glob pattern (global excludes are applied by the index)
@@ -54,7 +55,7 @@ export async function runRegexRule(
   // Legacy alias, normally normalized at load time
   const mustMatch = rule.mustMatch ?? (rule.forbidden === undefined ? false : !rule.forbidden);
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
       continue;

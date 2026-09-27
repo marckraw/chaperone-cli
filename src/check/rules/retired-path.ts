@@ -6,11 +6,12 @@ export async function runRetiredPathRule(
   rule: RetiredPathRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
 
   for (const entry of rule.paths) {
-    const files = index.glob(entry.pattern, rule.exclude ?? []);
+    const files = context.inScope(index.glob(entry.pattern, rule.exclude ?? []));
 
     for (const file of files) {
       let message = rule.message || `File exists in retired path matching "${entry.pattern}"`;

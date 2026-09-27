@@ -22,6 +22,11 @@ export interface RuleContext {
    * Null for packages and anything outside the index.
    */
   resolveImport(specifier: string, fromFile: string): string | null;
+  /**
+   * The files a rule should examine: all of `files`, or only the changed ones when the
+   * run is limited with `--since`. Rules still report the full glob count as filesChecked.
+   */
+  inScope(files: readonly string[]): string[];
 }
 
 /**

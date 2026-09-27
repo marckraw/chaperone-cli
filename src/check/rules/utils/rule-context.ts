@@ -6,6 +6,8 @@ import { extractImports, type ImportEntry } from "./import-extractor";
 export interface RuleContextOptions {
   /** Resolve tsconfig `paths`/`baseUrl` aliases (config: integrations.useTypescriptPaths, default true) */
   useTsconfigPaths?: boolean;
+  /** Limit file-scoped rules to these files (`--since`) */
+  changedFiles?: ReadonlySet<string>;
 }
 
 /**
@@ -37,6 +39,10 @@ export function createRuleContext(
       return entries;
     },
     resolveImport: (specifier, fromFile) => resolver.resolve(specifier, fromFile),
+    inScope: (files) => {
+      const changed = options.changedFiles;
+      return changed ? files.filter((file) => changed.has(file)) : [...files];
+    },
   };
 }
 

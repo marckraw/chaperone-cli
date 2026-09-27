@@ -62,7 +62,7 @@ export async function runPublicApiRule(
   // Get all files to check
   const files = index.glob(rule.files, rule.exclude ?? []);
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const fileModule = moduleOf(file);
 
     for (const entry of context.imports(file)) {

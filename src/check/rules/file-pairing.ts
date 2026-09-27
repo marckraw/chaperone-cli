@@ -16,7 +16,8 @@ export async function runFilePairingRule(
   rule: FilePairingRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { cwd, index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { cwd, index } = context;
   const results: CheckResult[] = [];
 
   const files = index.glob(rule.files, rule.exclude ?? []);
@@ -40,7 +41,7 @@ export async function runFilePairingRule(
   const mustExist = rule.mustExist ?? true;
   const requireTransformMatch = rule.requireTransformMatch ?? true;
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const transformed = file.replace(transformRegex, rule.pair.to);
     const didTransform = transformed !== file;
 

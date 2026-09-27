@@ -29,10 +29,11 @@ export async function runReactComponentCountRule(
     };
   }
 
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const files = index.glob(rule.files, rule.exclude ?? []);
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
       continue;

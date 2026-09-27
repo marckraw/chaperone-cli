@@ -5,6 +5,7 @@ import { format, type OutputFormat } from "./formatters";
 import type { CheckOptions, CheckResult, CheckSummary } from "./types";
 import { createRuleContext } from "./rules/utils/rule-context";
 import type { FileIndex } from "../utils/file-index";
+import { changedFilesSince } from "../utils/git";
 
 export * from "./types";
 export * from "./config-loader";
@@ -39,7 +40,7 @@ export interface CheckOptionsWithProgress extends CheckOptions {
  */
 export async function check(options: CheckOptionsWithProgress): Promise<CheckSummary> {
   const startTime = Date.now();
-  const { cwd, configPath, fix, include, exclude, onProgress, onDebug } = options;
+  const { cwd, configPath, fix, include, exclude, since, onProgress, onDebug } = options;
 
   // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
@@ -49,12 +50,16 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   // Get effective include/exclude patterns
   const patterns = getEffectivePatterns(config, include, exclude);
 
+  // --since: limit file-scoped rules to changed files (throws GitError on a bad ref)
+  const changedFiles = since ? await changedFilesSince(cwd, since) : undefined;
+
   // Walk the tree once; every rule shares this index and its content cache
   onProgress?.("Scanning files", "start");
   const context = createRuleContext(cwd, patterns.exclude, {
     useTsconfigPaths: config.integrations?.useTypescriptPaths !== false,
+    changedFiles,
   });
-  const totalFiles = countFilesToCheck(context.index, patterns.include);
+  const totalFiles = countFilesToCheck(context.index, patterns.include, changedFiles);
   onProgress?.("Scanning files", "done");
 
   // Start the tool runners; they run concurrently with each other and with the rules
@@ -111,6 +116,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     runners: toolResults.summaries,
     rules: summarizeRules(customRules, ruleResults.byRule),
     disabledRules,
+    since: since && changedFiles ? { ref: since, changedFiles: changedFiles.size } : undefined,
   };
 
   return summary;
@@ -134,14 +140,16 @@ export async function checkAndFormat(options: CheckOptionsWithProgress): Promise
 }
 
 /**
- * Count indexed files matched by the include patterns
+ * Count indexed files matched by the include patterns (only changed ones with --since)
  */
-function countFilesToCheck(index: FileIndex, include: string[]): number {
+function countFilesToCheck(index: FileIndex, include: string[], changedFiles?: ReadonlySet<string>): number {
   const allFiles = new Set<string>();
 
   for (const pattern of include) {
     for (const file of index.glob(pattern)) {
-      allFiles.add(file);
+      if (!changedFiles || changedFiles.has(file)) {
+        allFiles.add(file);
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "./testing/fixtures";
 
@@ -155,5 +156,41 @@ describe("chaperone init", () => {
     const json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
     expect(json.diagnostics).toEqual([]);
     expect(runCli(["init", "--yes"], cwd).exitCode).toBe(2);
+  });
+});
+
+describe("chaperone check --since", () => {
+  const git = (cwd: string, ...args: string[]) =>
+    Bun.spawnSync(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd });
+
+  test("limits custom rules to files changed since the ref", () => {
+    const cwd = projectWithRules([NO_TODO], { "src/old.ts": "// TODO old\n", "src/edited.ts": "export {};\n" });
+    git(cwd, "init", "-q");
+    git(cwd, "add", ".");
+    git(cwd, "commit", "-q", "-m", "init");
+    writeFileSync(join(cwd, "src/edited.ts"), "// TODO edited\n");
+    writeFileSync(join(cwd, "src/new.ts"), "// TODO new\n");
+
+    const full = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
+    expect(full.summary.totalErrors).toBe(3);
+
+    const run = runCli(["check", "--format", "json", "--since", "HEAD"], cwd);
+    const json = JSON.parse(run.stdout);
+    expect(json.results.map((result: { file: string }) => result.file).sort()).toEqual([
+      "src/edited.ts",
+      "src/new.ts",
+    ]);
+    expect(json.since).toEqual({ ref: "HEAD", changedFiles: 2 });
+    expect(json.gaps).toContain("custom rules only checked the 2 file(s) changed since HEAD");
+    expect(run.exitCode).toBe(1);
+  });
+
+  test("exits 2 for an unknown ref or outside a git repository", () => {
+    const cwd = projectWithRules([NO_TODO]);
+    expect(runCli(["check", "--since", "HEAD"], cwd).stderr).toContain("not inside one");
+    git(cwd, "init", "-q");
+    const run = runCli(["check", "--since", "no-such-ref"], cwd);
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr).toContain('unknown git ref "no-such-ref"');
   });
 });

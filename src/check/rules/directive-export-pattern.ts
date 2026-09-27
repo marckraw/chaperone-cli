@@ -100,7 +100,8 @@ export async function runDirectiveExportPatternRule(
   rule: DirectiveExportPatternRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const results: CheckResult[] = [];
   const files = index.glob(rule.files, rule.exclude ?? []);
 
@@ -108,7 +109,7 @@ export async function runDirectiveExportPatternRule(
     .map((pattern) => compileRegex(pattern))
     .filter((pattern): pattern is RegExp => pattern !== null);
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
       continue;

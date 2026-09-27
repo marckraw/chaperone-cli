@@ -67,7 +67,8 @@ export async function runSymbolReferenceRule(
   rule: SymbolReferenceRule,
   options: RuleRunnerOptions
 ): Promise<RuleResult> {
-  const { index } = getRuleContext(options);
+  const context = getRuleContext(options);
+  const { index } = context;
   const ruleExcludes = rule.exclude ?? [];
   const results: CheckResult[] = [];
 
@@ -95,7 +96,7 @@ export async function runSymbolReferenceRule(
 
   const symbolFilter = rule.symbolPattern ? new RegExp(rule.symbolPattern) : null;
 
-  for (const sourceFile of sourceFiles) {
+  for (const sourceFile of context.inScope(sourceFiles)) {
     const content = index.read(sourceFile);
     if (content === null) {
       continue;

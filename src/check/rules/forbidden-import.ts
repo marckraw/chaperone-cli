@@ -23,7 +23,7 @@ export async function runForbiddenImportRule(
 
   const includeTypeImports = rule.includeTypeImports ?? false;
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
       continue;

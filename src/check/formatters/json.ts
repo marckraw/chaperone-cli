@@ -53,6 +53,8 @@ export interface JsonOutput {
   rules: RuleSummary[];
   /** Rules switched off with `disabled: true` */
   disabledRules: Array<{ id: string; source: string }>;
+  /** Present when custom rules were limited to files changed since a git ref */
+  since?: { ref: string; changedFiles: number };
 }
 
 /**
@@ -90,6 +92,7 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
     runners: summary.runners ?? [],
     rules: summary.rules ?? [],
     disabledRules: summary.disabledRules ?? [],
+    since: summary.since,
   };
 
   // Group by source

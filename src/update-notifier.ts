@@ -19,6 +19,18 @@ export interface UpdateCache {
 
 // --- Pure functions ---
 
+const truthy = (value: string | undefined): boolean =>
+  value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+
+/**
+ * The daily update check (a request to the GitHub releases API) and its notice are
+ * skipped when CHAPERONE_NO_UPDATE_CHECK is set (to anything but "", "0" or "false")
+ * and on CI.
+ */
+export function isUpdateCheckDisabled(env: Record<string, string | undefined>): boolean {
+  return truthy(env["CHAPERONE_NO_UPDATE_CHECK"]) || truthy(env["CI"]);
+}
+
 export function compareSemver(a: string, b: string): number {
   const parse = (v: string): [number, number, number] => {
     const parts = v.replace(/^v/, "").split(".").map(Number);

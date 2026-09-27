@@ -86,6 +86,11 @@ export function describeGaps(summary: CheckSummary): string[] {
         .join(", ")})`
     );
   }
+  if (summary.since) {
+    gaps.push(
+      `custom rules only checked the ${summary.since.changedFiles} file(s) changed since ${summary.since.ref}`
+    );
+  }
   const emptyRules = rulesWithoutFiles(summary);
   if (emptyRules.length > 0) {
     gaps.push(

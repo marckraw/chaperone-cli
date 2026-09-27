@@ -325,7 +325,7 @@ export async function runFileContractRule(
   const staticRequiredAnyPatterns = rule.requiredAnyPatterns ?? [];
   const staticForbiddenPatterns = rule.forbiddenPatterns ?? [];
 
-  for (const file of files) {
+  for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
       continue;
