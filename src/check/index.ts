@@ -69,14 +69,15 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   const totalFiles = countFilesToCheck(context.index, patterns.include, changedFiles);
   onProgress?.("Scanning files", "done");
 
-  // Start the tool runners; they run concurrently with each other and with the rules
+  // Start the tool runners; they run concurrently with each other and with the file
+  // rules. With --fix they run one after another (fixers rewrite the same files) and
+  // the rules wait for them.
   const toolsPromise = runAllTools(config, {
     cwd,
     fix,
+    sequential: fix,
     onRunner: (runner, status) => onProgress?.(runner.label, status),
   });
-
-  // --fix rewrites files, so rules must wait for the fixers to finish
   if (fix) {
     await toolsPromise;
   }
@@ -90,6 +91,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     exclude: patterns.exclude,
     onDebug,
     context,
+    waitBeforeCommands: toolsPromise,
   });
   if (customRules.length > 0) {
     onProgress?.(rulesStep, "done");

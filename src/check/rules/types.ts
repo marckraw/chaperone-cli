@@ -40,6 +40,11 @@ export interface RuleRunnerOptions {
   onDebug?: DebugCallback;
   /** Shared run state. Created on demand from cwd/exclude when omitted. */
   context?: RuleContext;
+  /**
+   * Command rules wait for this (the tool runners) before they start, since a command
+   * may write files while the tools read them.
+   */
+  waitBeforeCommands?: Promise<unknown>;
 }
 
 /**

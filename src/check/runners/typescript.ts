@@ -118,11 +118,13 @@ export function checksNothing(tsconfigText: string, args: readonly string[] = []
   } catch {
     return false; // tsc reports invalid configs itself
   }
-  const config = raw as { files?: unknown; include?: unknown; references?: unknown };
+  const config = raw as { files?: unknown; include?: unknown; references?: unknown; extends?: unknown };
   return (
     Array.isArray(config.files) &&
     config.files.length === 0 &&
     config.include === undefined &&
+    config.extends === undefined && // an inherited `include` would give it files
+
     Array.isArray(config.references) &&
     config.references.length > 0
   );

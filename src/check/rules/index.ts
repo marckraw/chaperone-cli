@@ -163,6 +163,9 @@ export async function runAllRules(
       };
     } else {
       try {
+        if (isCommandRule(rule) && options.waitBeforeCommands) {
+          await options.waitBeforeCommands;
+        }
         result = await dispatchRule(rule, options, onDebug);
       } catch (error) {
         // A crashing rule fails the check loudly instead of vanishing or aborting the run.

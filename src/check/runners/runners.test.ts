@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../../testing/fixtures";
 import type { ExecResult } from "../../utils/process";
@@ -190,6 +190,7 @@ describe("typescript runner: solution-style configs", () => {
     expect(checksNothing(solution)).toBe(true);
     expect(checksNothing(solution, ["-p", "tsconfig.app.json"])).toBe(false);
     expect(checksNothing('{ "include": ["src"] }')).toBe(false);
+    expect(checksNothing('{ "extends": "./base.json", "files": [], "references": [{ "path": "./a" }] }')).toBe(false);
   });
 });
 
@@ -204,5 +205,49 @@ describe("eslint runner: exit code 1 with only warnings", () => {
       ["eslint/max-warnings", "error"],
     ]);
     expect(run.success).toBe(false);
+  });
+});
+
+describe("runAllTools ordering", () => {
+  function projectWithFakeTools(): string {
+    const script = (name: string, output: string) =>
+      `#!/bin/sh\necho "${name} start" >> "$(dirname "$0")/../../tools.log"\nsleep 0.2\necho "${name} end" >> "$(dirname "$0")/../../tools.log"\nprintf '%s' '${output}'\n`;
+    const cwd = makeProject({
+      "tsconfig.json": '{ "include": ["src"] }',
+      "eslint.config.js": "export default [];\n",
+      ".prettierrc": "{}\n",
+      "node_modules/.bin/tsc": script("tsc", ""),
+      "node_modules/.bin/eslint": script("eslint", "[]"),
+      "node_modules/.bin/prettier": script("prettier", ""),
+    });
+    for (const tool of ["tsc", "eslint", "prettier"]) {
+      chmodSync(join(cwd, "node_modules/.bin", tool), 0o755);
+    }
+    return cwd;
+  }
+
+  test("--fix runs ESLint, then Prettier, then TypeScript, one at a time", async () => {
+    const cwd = projectWithFakeTools();
+    const { summaries } = await runAllTools(DEFAULT_CONFIG, { cwd, fix: true, sequential: true });
+    expect(summaries.map((runner) => [runner.name, runner.status])).toEqual([
+      ["typescript", "passed"],
+      ["eslint", "passed"],
+      ["prettier", "passed"],
+    ]);
+    expect(readFileSync(join(cwd, "tools.log"), "utf-8").trim().split("\n")).toEqual([
+      "eslint start",
+      "eslint end",
+      "prettier start",
+      "prettier end",
+      "tsc start",
+      "tsc end",
+    ]);
+  });
+
+  test("without --fix the tools run concurrently", async () => {
+    const cwd = projectWithFakeTools();
+    await runAllTools(DEFAULT_CONFIG, { cwd });
+    const log = readFileSync(join(cwd, "tools.log"), "utf-8").trim().split("\n");
+    expect(log.slice(0, 3).every((line) => line.endsWith("start"))).toBe(true);
   });
 });

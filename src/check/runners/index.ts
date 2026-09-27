@@ -129,17 +129,29 @@ async function runOne(
   return result;
 }
 
+/** With --fix, the fixers must not rewrite files at the same time: fix, format, then type-check */
+const SEQUENTIAL_ORDER = ["eslint", "prettier", "typescript"];
+
 /**
- * Run all enabled tool runners concurrently
+ * Run all enabled tool runners: concurrently, or one after another with
+ * `sequential` (used for --fix, since ESLint and Prettier rewrite the same files).
  */
 export async function runAllTools(
   config: ChaperoneConfig,
-  options: Omit<RunnerOptions, "config"> & { onRunner?: RunnerProgress }
+  options: Omit<RunnerOptions, "config"> & { onRunner?: RunnerProgress; sequential?: boolean }
 ): Promise<AllRunnersResult> {
-  const { onRunner, ...runnerOptions } = options;
-  const finished = await Promise.all(
-    runners.map((runner) => runOne(runner, config, runnerOptions, onRunner))
-  );
+  const { onRunner, sequential, ...runnerOptions } = options;
+  let finished: RunnerResult[];
+  if (sequential) {
+    const byName = new Map<string, RunnerResult>();
+    for (const name of SEQUENTIAL_ORDER) {
+      const runner = runners.find((candidate) => candidate.name === name)!;
+      byName.set(name, await runOne(runner, config, runnerOptions, onRunner));
+    }
+    finished = runners.map((runner) => byName.get(runner.name)!);
+  } else {
+    finished = await Promise.all(runners.map((runner) => runOne(runner, config, runnerOptions, onRunner)));
+  }
 
   const bySource: Record<string, RunnerResult> = {};
   const results: CheckResult[] = [];
