@@ -43,7 +43,7 @@ export interface Runner {
   name: string;
   /** Human-readable name, e.g. "TypeScript" */
   label: string;
-  detect(cwd: string): RunnerAvailability;
+  detect(cwd: string, config?: ToolConfig): RunnerAvailability;
   run(options: RunnerOptions): Promise<RunnerResult>;
   /** @deprecated use detect() */
   isAvailable(cwd: string): Promise<boolean>;

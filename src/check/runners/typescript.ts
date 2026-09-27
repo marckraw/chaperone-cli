@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parseJsonc } from "../../utils/jsonc";
 import { execCommand, findBinary, type ExecResult } from "../../utils/process";
 import { findConfigFile, TYPESCRIPT_CONFIG_FILES } from "../../utils/tool-configs";
-import type { CheckResult } from "../types";
+import type { CheckResult, ToolConfig } from "../types";
 import {
   DEFAULT_RUNNER_TIMEOUT_MS,
   runnerFailure,
@@ -98,6 +101,33 @@ export function interpretTypeScriptRun(execResult: ExecResult, command: string):
   };
 }
 
+const PROJECT_ARGS = new Set(["-p", "--project", "-b", "--build"]);
+
+/**
+ * A "solution-style" tsconfig (`"files": []` plus `references`, as in the Vite
+ * templates) contains no files of its own: `tsc --noEmit` would type-check nothing
+ * and exit 0. Returns true for such a config unless the user points tsc elsewhere.
+ */
+export function checksNothing(tsconfigText: string, args: readonly string[] = []): boolean {
+  if (args.some((arg) => PROJECT_ARGS.has(arg) || arg.startsWith("--project="))) {
+    return false;
+  }
+  let raw: unknown;
+  try {
+    raw = parseJsonc(tsconfigText);
+  } catch {
+    return false; // tsc reports invalid configs itself
+  }
+  const config = raw as { files?: unknown; include?: unknown; references?: unknown };
+  return (
+    Array.isArray(config.files) &&
+    config.files.length === 0 &&
+    config.include === undefined &&
+    Array.isArray(config.references) &&
+    config.references.length > 0
+  );
+}
+
 /**
  * TypeScript runner - runs tsc --noEmit
  */
@@ -105,9 +135,24 @@ export const typescriptRunner: Runner = {
   name: "typescript",
   label: "TypeScript",
 
-  detect(cwd: string): RunnerAvailability {
-    if (!findConfigFile(cwd, TYPESCRIPT_CONFIG_FILES)) {
+  detect(cwd: string, config?: ToolConfig): RunnerAvailability {
+    const tsconfig = findConfigFile(cwd, TYPESCRIPT_CONFIG_FILES);
+    if (!tsconfig) {
       return { available: false, reason: "no tsconfig.json in the project root" };
+    }
+    let tsconfigText = "";
+    try {
+      tsconfigText = readFileSync(join(cwd, tsconfig), "utf-8");
+    } catch {
+      // tsc will report an unreadable config
+    }
+    if (checksNothing(tsconfigText, config?.args)) {
+      return {
+        available: false,
+        reason:
+          'tsconfig.json only references other projects ("files": []), so tsc --noEmit would check nothing; ' +
+          'point it at a project with rules.typescript.args, e.g. ["-p", "tsconfig.app.json"]',
+      };
     }
     const binary = findBinary("tsc", cwd);
     if (!binary) {

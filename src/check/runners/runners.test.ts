@@ -7,7 +7,7 @@ import { DEFAULT_CONFIG } from "../types";
 import { interpretESLintRun, parseESLintOutput } from "./eslint";
 import { runAllTools } from "./index";
 import { interpretPrettierRun, parsePrettierOutput } from "./prettier";
-import { interpretTypeScriptRun, parseTypeScriptOutput } from "./typescript";
+import { checksNothing, interpretTypeScriptRun, parseTypeScriptOutput } from "./typescript";
 
 afterEach(cleanupProjects);
 
@@ -172,5 +172,23 @@ describe("runAllTools", () => {
       const eslint = summaries.find((runner) => runner.name === "eslint")!;
       expect(eslint.reason ?? "").not.toContain("no ESLint config");
     }
+  });
+});
+
+describe("typescript runner: solution-style configs", () => {
+  test("a tsconfig with only references is skipped with the reason instead of passing", async () => {
+    const cwd = makeProject({
+      "tsconfig.json": '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }',
+    });
+    const { summaries } = await runAllTools(DEFAULT_CONFIG, { cwd });
+    expect(summaries[0]!.status).toBe("skipped");
+    expect(summaries[0]!.reason).toContain("would check nothing");
+  });
+
+  test("checksNothing respects an explicit -p argument", () => {
+    const solution = '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }';
+    expect(checksNothing(solution)).toBe(true);
+    expect(checksNothing(solution, ["-p", "tsconfig.app.json"])).toBe(false);
+    expect(checksNothing('{ "include": ["src"] }')).toBe(false);
   });
 });

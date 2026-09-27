@@ -90,7 +90,7 @@ async function runOne(
     };
   }
 
-  const availability = runner.detect(options.cwd);
+  const availability = runner.detect(options.cwd, toolConfig);
   if (!availability.available) {
     onRunner?.(runner, "skipped");
     return {
