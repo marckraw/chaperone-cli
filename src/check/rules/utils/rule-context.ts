@@ -46,6 +46,30 @@ export function createRuleContext(
   };
 }
 
+/** Specifiers that look like project aliases rather than packages: "@/x", "~/x", "#x" */
+const ALIAS_LIKE = /^(?:@\/|~|#)/;
+
+/**
+ * Collects alias-like specifiers that did not resolve, so import rules can say that
+ * they could not follow them instead of silently ignoring them.
+ */
+export function createUnresolvedAliasTracker() {
+  const unresolved = new Set<string>();
+  return {
+    record(specifier: string): void {
+      if (ALIAS_LIKE.test(specifier)) unresolved.add(specifier);
+    },
+    notice(): string | null {
+      if (unresolved.size === 0) return null;
+      const examples = [...unresolved].slice(0, 3).map((specifier) => `"${specifier}"`).join(", ");
+      return (
+        `${unresolved.size} alias-like import specifier(s) did not resolve to project files (e.g. ${examples}), ` +
+        "so they were not checked; declare the alias in tsconfig.json compilerOptions.paths"
+      );
+    },
+  };
+}
+
 /**
  * The context passed in by the orchestrator, or a fresh one for standalone calls.
  */

@@ -209,3 +209,15 @@ describe("import-boundary layer overlap", () => {
     ]);
   });
 });
+
+describe("unresolved aliases", () => {
+  test("import-boundary says when alias-like imports could not be followed", async () => {
+    const cwd = makeProject({
+      "src/shared/a.ts": 'import { x } from "@/features/x";\nimport React from "react";\n',
+      "src/features/x.ts": "export const x = 1;\n",
+    });
+    const result = await runImportBoundaryRule(LAYERS, { cwd, ...OPTIONS });
+    expect(result.results).toEqual([]);
+    expect(result.notices?.[0]).toContain('1 alias-like import specifier(s) did not resolve to project files (e.g. "@/features/x")');
+  });
+});

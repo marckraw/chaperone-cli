@@ -2,7 +2,7 @@ import { basename, posix } from "node:path";
 import type { FileIndex } from "../../utils/file-index";
 import type { CheckResult, PublicApiRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-import { getRuleContext } from "./utils/rule-context";
+import { createUnresolvedAliasTracker, getRuleContext } from "./utils/rule-context";
 
 /**
  * Discover module root directories matching the modules glob pattern.
@@ -61,6 +61,7 @@ export async function runPublicApiRule(
 
   // Get all files to check
   const files = index.glob(rule.files, rule.exclude ?? []);
+  const unresolvedAliases = createUnresolvedAliasTracker();
 
   for (const file of context.inScope(files)) {
     const fileModule = moduleOf(file);
@@ -68,7 +69,10 @@ export async function runPublicApiRule(
     for (const entry of context.imports(file)) {
       // Relative imports and tsconfig aliases both resolve to project files
       const resolvedPath = context.resolveImport(entry.source, file);
-      if (!resolvedPath) continue;
+      if (!resolvedPath) {
+        unresolvedAliases.record(entry.source);
+        continue;
+      }
 
       // Check if this import targets a module
       const targetModule = moduleOf(resolvedPath);
@@ -97,6 +101,9 @@ export async function runPublicApiRule(
       }
     }
   }
+
+  const aliasNotice = unresolvedAliases.notice();
+  if (aliasNotice) notices.push(aliasNotice);
 
   return {
     ruleId: rule.id,

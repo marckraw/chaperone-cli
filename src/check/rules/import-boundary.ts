@@ -1,6 +1,6 @@
 import type { CheckResult, ImportBoundaryRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
-import { getRuleContext } from "./utils/rule-context";
+import { createUnresolvedAliasTracker, getRuleContext } from "./utils/rule-context";
 
 /**
  * Enforce architectural layer boundaries.
@@ -52,6 +52,7 @@ export async function runImportBoundaryRule(
 
   // Step 2: For each file in any layer, check its imports (layer membership uses every file)
   const inScope = new Set(context.inScope([...fileToLayer.keys()]));
+  const unresolvedAliases = createUnresolvedAliasTracker();
   for (const [file, sourceLayer] of fileToLayer.entries()) {
     if (!inScope.has(file)) continue;
     const allowedLayers = new Set(rule.layers[sourceLayer]?.allowImportsFrom ?? []);
@@ -61,7 +62,10 @@ export async function runImportBoundaryRule(
       if (!includeDynamicImports && entry.isDynamic) continue;
 
       const resolvedPath = context.resolveImport(entry.source, file);
-      if (!resolvedPath) continue;
+      if (!resolvedPath) {
+        unresolvedAliases.record(entry.source);
+        continue;
+      }
 
       const targetLayer = fileToLayer.get(resolvedPath);
       if (!targetLayer) continue; // Not in any defined layer
@@ -89,6 +93,9 @@ export async function runImportBoundaryRule(
       }
     }
   }
+
+  const aliasNotice = unresolvedAliases.notice();
+  if (aliasNotice) notices.push(aliasNotice);
 
   return {
     ruleId: rule.id,
