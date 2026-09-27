@@ -210,3 +210,23 @@ describe("runReactComponentCountRule: generic wrappers", () => {
     expect(result.results[0]?.context?.actualValue).toBe("2: MenuContent, MenuItem");
   });
 });
+
+describe("runReactComponentCountRule: default exports and generic classes", () => {
+  test("counts default-exported arrows and wrappers, and generic class components", async () => {
+    const cwd = makeProject({
+      "src/a.tsx": "export function Named() { return <b />; }\nexport default () => <p />;\n",
+      "src/b.tsx": "export function Named() { return <b />; }\nexport default forwardRef(function Input(props, ref) { return <input ref={ref} />; });\n",
+      "src/c.tsx": "export function Named() { return <b />; }\nclass C extends React.Component<{ t: string }> {\n  render() { return <div>{this.props.t}</div>; }\n}\n",
+      "src/d.tsx": "export function Named() { return <b />; }\nexport default memo(Named);\n",
+    });
+    const result = await runReactComponentCountRule(
+      { type: "react-component-count", id: "one", severity: "error", files: "src/**/*.tsx" },
+      { cwd, include: [], exclude: [] }
+    );
+    expect(result.results.map((entry) => [entry.file, entry.context?.actualValue])).toEqual([
+      ["src/a.tsx", "2: Named, default export"],
+      ["src/b.tsx", "2: Named, default export"],
+      ["src/c.tsx", "2: Named, C"],
+    ]);
+  });
+});

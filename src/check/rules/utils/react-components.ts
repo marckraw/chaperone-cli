@@ -251,10 +251,30 @@ export function findReactComponents(content: string, filePath = "component.tsx")
       if (isName(tokens[classCursor], "React") && isPunct(tokens[classCursor + 1], ".")) classCursor += 2;
       if (!isName(tokens[classCursor], "Component") && !isName(tokens[classCursor], "PureComponent")) continue;
       let bodyStart = classCursor + 1;
+      // Skip type arguments, which may contain object types: Component<{ title: string }>
+      if (isPunct(tokens[bodyStart], "<")) {
+        let angles = 0;
+        for (; bodyStart < tokens.length; bodyStart++) {
+          if (isPunct(tokens[bodyStart], "<")) angles++;
+          else if (isPunct(tokens[bodyStart], ">") && --angles === 0) {
+            bodyStart++;
+            break;
+          }
+        }
+      }
       while (bodyStart < tokens.length && !isPunct(tokens[bodyStart], "{")) bodyStart++;
       const bodyEnd = structure.partner[bodyStart] ?? -1;
       if (bodyEnd > bodyStart && rendersJsx(tokens, bodyStart, bodyEnd)) {
         add(name, start);
+      }
+      continue;
+    }
+
+    // export default () => <p />, export default forwardRef(function Input() { ... })
+    if (isDefault) {
+      const initEnd = initializerEnd(tokens, structure, cursor, lines);
+      if (isFunctionLike(tokens, structure, cursor, initEnd) && rendersJsx(tokens, cursor, initEnd)) {
+        add("default export", start);
       }
       continue;
     }
