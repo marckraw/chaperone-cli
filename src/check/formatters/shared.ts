@@ -2,7 +2,7 @@
  * Helpers shared by the text, json and ai formatters.
  */
 
-import type { CheckResult, CheckSummary, ConfigDiagnostic, RunnerSummary } from "../types";
+import type { CheckResult, CheckSummary, ConfigDiagnostic, RuleSummary, RunnerSummary } from "../types";
 
 export const SOURCE_ORDER = ["typescript", "eslint", "prettier", "custom", "ai-instructions"];
 
@@ -80,9 +80,49 @@ export function describeGaps(summary: CheckSummary): string[] {
   const gaps: string[] = [];
   const skippedTools = (summary.runners ?? []).filter((runner) => runner.status === "skipped");
   if (skippedTools.length > 0) {
-    gaps.push(`${skippedTools.length} tool${skippedTools.length === 1 ? "" : "s"} skipped (${skippedTools.map((runner) => runner.name).join(", ")})`);
+    gaps.push(
+      `${skippedTools.length} tool${skippedTools.length === 1 ? "" : "s"} skipped (${skippedTools
+        .map((runner) => runner.name)
+        .join(", ")})`
+    );
+  }
+  const emptyRules = rulesWithoutFiles(summary);
+  if (emptyRules.length > 0) {
+    gaps.push(
+      `${emptyRules.length} rule${emptyRules.length === 1 ? "" : "s"} matched no files (${emptyRules
+        .map((rule) => rule.id)
+        .join(", ")})`
+    );
   }
   return gaps;
+}
+
+/**
+ * Rules that passed only because their globs matched nothing.
+ */
+export function rulesWithoutFiles(summary: CheckSummary): RuleSummary[] {
+  return (summary.rules ?? []).filter((rule) => rule.status === "no-files");
+}
+
+/**
+ * Every "this was not (fully) checked" line, for the skipped/notices sections of a report.
+ */
+export function describeSkipped(summary: CheckSummary): string[] {
+  const lines: string[] = [];
+  for (const runner of summary.runners ?? []) {
+    if (runner.status === "skipped") {
+      lines.push(`Tool ${runner.label} skipped: ${runner.reason ?? "not available"}`);
+    }
+  }
+  for (const rule of summary.rules ?? []) {
+    for (const notice of rule.notices) {
+      lines.push(`Rule "${rule.id}" (${rule.type}): ${notice}`);
+    }
+  }
+  for (const disabled of summary.disabledRules ?? []) {
+    lines.push(`Rule "${disabled.id}" is disabled (${disabled.source})`);
+  }
+  return lines;
 }
 
 /**

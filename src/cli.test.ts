@@ -125,3 +125,24 @@ describe("chaperone check machine output", () => {
     expect(text).not.toContain("regex/no-fixme");
   });
 });
+
+describe("chaperone check visibility", () => {
+  test("a rule whose glob matches nothing is reported, and PASSED says so", () => {
+    const cwd = projectWithRules([{ ...NO_TODO, id: "vue-only", files: "src/**/*.vue" }], {
+      "src/a.ts": "export const a = 1;\n",
+    });
+
+    const json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
+    expect(json.status).toBe("passed-with-gaps");
+    expect(json.rules).toEqual([
+      expect.objectContaining({ id: "vue-only", status: "no-files", filesChecked: 0 }),
+    ]);
+
+    const text = runCli(["check"], cwd).stdout;
+    expect(text).toContain("PASSED, but not everything was checked");
+    expect(text).toContain('"files" glob "src/**/*.vue" matched no files');
+
+    const ai = runCli(["check", "--format", "ai"], cwd).stdout;
+    expect(ai).toContain('Rule "vue-only" (regex): "files" glob "src/**/*.vue" matched no files');
+  });
+});

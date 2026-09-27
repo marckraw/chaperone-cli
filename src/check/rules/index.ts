@@ -1,4 +1,4 @@
-import type { ChaperoneConfig, CheckResult, CustomRule } from "../types";
+import type { ChaperoneConfig, CheckResult, CustomRule, RuleSummary } from "../types";
 import { formatDiagnostic, validateRule } from "../config-schema";
 import type { RuleRunnerOptions, RuleResult } from "./types";
 import { runFilePairingRule, isFilePairingRule } from "./file-pairing";
@@ -180,4 +180,53 @@ export async function runAllRules(
     results: allResults,
     byRule,
   };
+}
+
+/**
+ * The glob a rule's scope is defined by, for "matched no files" notices.
+ */
+function scopeDescription(rule: CustomRule): string {
+  switch (rule.type) {
+    case "symbol-reference":
+      return `"sourceFiles" glob "${rule.sourceFiles}"`;
+    case "import-boundary":
+      return "none of its layer globs";
+    case "retired-path":
+    case "package-fields":
+    case "command":
+      return "its globs";
+    default:
+      return `"files" glob "${rule.files}"`;
+  }
+}
+
+/**
+ * Summarize what every rule did. A rule that scans files but whose globs matched
+ * nothing is reported as "no-files": it passed only because it checked nothing.
+ */
+export function summarizeRules(rules: CustomRule[], byRule: Record<string, RuleResult>): RuleSummary[] {
+  return rules.map((rule) => {
+    const result = byRule[rule.id];
+    const errors = result?.results.filter((entry) => entry.severity === "error").length ?? 0;
+    const warnings = result?.results.filter((entry) => entry.severity === "warning").length ?? 0;
+    const notices = [...(result?.notices ?? [])];
+    const noFiles = result?.filesChecked === 0;
+    if (noFiles) {
+      notices.unshift(
+        rule.type === "import-boundary"
+          ? "none of its layer globs matched any file, so it checked nothing"
+          : `${scopeDescription(rule)} matched no files, so it checked nothing`
+      );
+    }
+
+    return {
+      id: rule.id,
+      type: rule.type,
+      status: errors + warnings > 0 ? "failed" : noFiles ? "no-files" : "passed",
+      filesChecked: result?.filesChecked,
+      errors,
+      warnings,
+      notices,
+    };
+  });
 }

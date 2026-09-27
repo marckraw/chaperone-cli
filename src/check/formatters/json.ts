@@ -1,4 +1,4 @@
-import type { CheckSummary, ConfigDiagnostic, RunnerSummary } from "../types";
+import type { CheckSummary, ConfigDiagnostic, RuleSummary, RunnerSummary } from "../types";
 import { describeGaps } from "./shared";
 
 export interface JsonFormatOptions {
@@ -49,6 +49,10 @@ export interface JsonOutput {
   diagnostics: ConfigDiagnostic[];
   /** What each tool runner did, including why it was skipped */
   runners: RunnerSummary[];
+  /** What each custom rule did; status "no-files" means its globs matched nothing */
+  rules: RuleSummary[];
+  /** Rules switched off with `disabled: true` */
+  disabledRules: Array<{ id: string; source: string }>;
 }
 
 /**
@@ -84,6 +88,8 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
     bySource: {},
     diagnostics: summary.diagnostics ?? [],
     runners: summary.runners ?? [],
+    rules: summary.rules ?? [],
+    disabledRules: summary.disabledRules ?? [],
   };
 
   // Group by source

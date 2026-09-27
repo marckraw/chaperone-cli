@@ -130,6 +130,29 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
     lines.push("");
   }
 
+  // Rules that checked nothing, scope notices and disabled rules
+  const rules = summary.rules ?? [];
+  const disabled = summary.disabledRules ?? [];
+  const noticed = rules.filter((rule) => rule.notices.length > 0);
+  if (rules.length > 0 || disabled.length > 0) {
+    const noFiles = rules.filter((rule) => rule.status === "no-files").length;
+    const counts = [
+      `${rules.length} run`,
+      ...(noFiles > 0 ? [`${colors.yellow}${noFiles} matched no files${colors.reset}`] : []),
+      ...(disabled.length > 0 ? [`${disabled.length} disabled`] : []),
+    ];
+    lines.push(`${colors.bold}Custom rules:${colors.reset} ${counts.join(", ")}`);
+    for (const rule of noticed) {
+      for (const notice of rule.notices) {
+        lines.push(`  ${colors.yellow}○${colors.reset} ${rule.id} (${rule.type}): ${notice}`);
+      }
+    }
+    for (const entry of disabled) {
+      lines.push(`  ${colors.dim}–${colors.reset} ${entry.id}: disabled in ${entry.source}`);
+    }
+    lines.push("");
+  }
+
   // Configuration warnings
   const configWarnings = (summary.diagnostics ?? []).filter((diagnostic) => diagnostic.level === "warning");
   if (configWarnings.length > 0) {

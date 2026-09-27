@@ -1,27 +1,23 @@
 import type { CheckResult, CheckSummary } from "../types";
-import { describeDiagnostic, describeRunner, statusLine } from "./shared";
+import {
+  describeDiagnostic,
+  describeRunner,
+  describeSkipped,
+  formatDuration,
+  formatLocation,
+  groupBySource,
+  orderedSources,
+  statusLine,
+} from "./shared";
 
 export interface AIFormatOptions {
   /** List only errors (counts still include warnings) */
   quiet?: boolean;
+  /** Maximum results listed per rule before "… and N more" (default: 20) */
+  maxPerRule?: number;
 }
 
-/**
- * Group results by source
- */
-function groupBySource(results: CheckResult[]): Record<string, CheckResult[]> {
-  const groups: Record<string, CheckResult[]> = {};
-
-  for (const result of results) {
-    const source = result.source ?? "unknown";
-    if (!groups[source]) {
-      groups[source] = [];
-    }
-    groups[source].push(result);
-  }
-
-  return groups;
-}
+const DEFAULT_MAX_PER_RULE = 20;
 
 /**
  * Get markdown-friendly source heading
@@ -43,32 +39,44 @@ function getSourceHeading(source: string): string {
   }
 }
 
+/** Inline code that survives backticks in the content */
+function code(text: string): string {
+  const fence = text.includes("`") ? "``" : "`";
+  return `${fence}${text}${fence}`;
+}
+
 /**
- * Format a single result for AI consumption
+ * Format a single result for AI consumption, with the context needed to fix it.
  */
 function formatResultForAI(result: CheckResult): string {
-  const severity = result.severity.toUpperCase();
-  const location = result.line
-    ? `${result.file}:${result.line}${result.column ? `:${result.column}` : ""}`
-    : result.file;
+  const lines = [`- **${formatLocation(result)}** — ${result.severity.toUpperCase()}: ${result.message}`];
+  const ctx = result.context;
 
-  const lines = [
-    `- **${location}**`,
-    `  Rule: \`${result.rule}\``,
-    `  ${severity}: ${result.message}`,
-  ];
-
-  if (result.suggestion) {
-    lines.push(`  Suggestion: ${result.suggestion}`);
+  if (ctx?.matchedText) {
+    lines.push(`  - Found: ${code(ctx.matchedText)}`);
   }
-
-  if (result.context?.commandOutput) {
-    lines.push("  Command output:");
-    lines.push("  ```");
-    for (const outputLine of result.context.commandOutput.split("\n")) {
-      lines.push(`  ${outputLine}`);
+  if (ctx?.symbol) {
+    lines.push(`  - Symbol: ${code(ctx.symbol)}`);
+  }
+  if (ctx?.field) {
+    lines.push(`  - Field: ${code(ctx.field)}`);
+  }
+  if (ctx?.expectedValue || ctx?.actualValue) {
+    lines.push(`  - Expected: ${ctx.expectedValue ?? "—"}; actual: ${ctx.actualValue ?? "—"}`);
+  }
+  if (ctx?.detectedPatterns?.length) {
+    lines.push(`  - Detected: ${ctx.detectedPatterns.join(", ")}`);
+  }
+  if (result.suggestion) {
+    lines.push(`  - Suggestion: ${result.suggestion}`);
+  }
+  if (ctx?.commandOutput) {
+    lines.push("  - Output:");
+    lines.push("    ```");
+    for (const outputLine of ctx.commandOutput.split("\n")) {
+      lines.push(`    ${outputLine}`);
     }
-    lines.push("  ```");
+    lines.push("    ```");
   }
 
   return lines.join("\n");
@@ -79,6 +87,7 @@ function formatResultForAI(result: CheckResult): string {
  * Designed for consumption by LLMs like Claude, GPT, etc.
  */
 export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): string {
+  const maxPerRule = options.maxPerRule ?? DEFAULT_MAX_PER_RULE;
   const lines: string[] = [];
   const listed = options.quiet
     ? summary.results.filter((result) => result.severity === "error")
@@ -93,7 +102,7 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
   lines.push(`**Files checked:** ${summary.totalFiles}`);
   lines.push(`**Errors:** ${summary.totalErrors}`);
   lines.push(`**Warnings:** ${summary.totalWarnings}`);
-  lines.push(`**Duration:** ${(summary.duration / 1000).toFixed(2)}s`);
+  lines.push(`**Duration:** ${formatDuration(summary.duration)}`);
   lines.push("");
 
   const runners = summary.runners ?? [];
@@ -106,7 +115,18 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
     lines.push("");
   }
 
-  const configWarnings = (summary.diagnostics ?? []).filter((d) => d.level === "warning");
+  // Everything that was not (fully) checked, so a pass is never over-trusted
+  const skipped = describeSkipped(summary).filter((line) => !line.startsWith("Tool "));
+  if (skipped.length > 0) {
+    lines.push("### Not Fully Checked");
+    lines.push("");
+    for (const line of skipped) {
+      lines.push(`- ${line}`);
+    }
+    lines.push("");
+  }
+
+  const configWarnings = (summary.diagnostics ?? []).filter((diagnostic) => diagnostic.level === "warning");
   if (configWarnings.length > 0) {
     lines.push("### Configuration Warnings");
     lines.push("");
@@ -121,29 +141,50 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
     return lines.join("\n");
   }
 
-  // Group results by source for organized output
+  // Group by source, then by rule; errors first, capped per rule
   const grouped = groupBySource(listed);
-  const sourceOrder = ["typescript", "eslint", "prettier", "custom", "ai-instructions"];
+  let omitted = 0;
 
-  for (const source of sourceOrder) {
-    const results = grouped[source];
-    if (!results || results.length === 0) {
-      continue;
-    }
-
+  for (const source of orderedSources(grouped)) {
+    const results = grouped[source] ?? [];
     lines.push(`### ${getSourceHeading(source)}`);
     lines.push("");
 
-    // Sort by severity (errors first) then by file
-    const sorted = [...results].sort((a, b) => {
-      if (a.severity !== b.severity) {
-        return a.severity === "error" ? -1 : 1;
-      }
-      return a.file.localeCompare(b.file);
+    const byRule = new Map<string, CheckResult[]>();
+    for (const result of results) {
+      const list = byRule.get(result.rule) ?? [];
+      list.push(result);
+      byRule.set(result.rule, list);
+    }
+
+    const ruleOrder = [...byRule.entries()].sort(([, a], [, b]) => {
+      const aErrors = a.some((result) => result.severity === "error") ? 0 : 1;
+      const bErrors = b.some((result) => result.severity === "error") ? 0 : 1;
+      return aErrors - bErrors;
     });
 
-    for (const result of sorted) {
-      lines.push(formatResultForAI(result));
+    for (const [rule, ruleResults] of ruleOrder) {
+      const errors = ruleResults.filter((result) => result.severity === "error").length;
+      const warnings = ruleResults.length - errors;
+      const counts = [errors > 0 ? `${errors} error(s)` : "", warnings > 0 ? `${warnings} warning(s)` : ""]
+        .filter(Boolean)
+        .join(", ");
+      lines.push(`#### ${code(rule)} — ${counts}`);
+      lines.push("");
+
+      const sorted = [...ruleResults].sort((a, b) => {
+        if (a.severity !== b.severity) return a.severity === "error" ? -1 : 1;
+        return a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0);
+      });
+      for (const result of sorted.slice(0, maxPerRule)) {
+        lines.push(formatResultForAI(result));
+      }
+      if (sorted.length > maxPerRule) {
+        omitted += sorted.length - maxPerRule;
+        lines.push(
+          `- … and ${sorted.length - maxPerRule} more for ${code(rule)} (run \`chaperone check --format json\` for the full list)`
+        );
+      }
       lines.push("");
     }
   }
@@ -154,62 +195,44 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
     lines.push("");
 
     const actions: string[] = [];
-
     if (summary.totalErrors > 0) {
-      actions.push(
-        `1. Fix ${summary.totalErrors} error(s) - these must be resolved before proceeding`
-      );
+      actions.push(`Fix ${summary.totalErrors} error(s) - these must be resolved before proceeding`);
     }
 
-    // Check for specific fixable issues
-    const fixableCount = summary.results.filter((r) => r.fixable).length;
+    const fixableCount = summary.results.filter((result) => result.fixable).length;
     if (fixableCount > 0) {
-      actions.push(`2. Run \`chaperone check --fix\` to auto-fix ${fixableCount} issue(s)`);
+      actions.push(`Run \`chaperone check --fix\` to auto-fix ${fixableCount} issue(s)`);
     }
 
-    // TypeScript-specific advice
-    if (grouped["typescript"]?.length > 0) {
-      actions.push(`3. Review TypeScript errors - check type annotations and assignments`);
+    if ((grouped["typescript"]?.length ?? 0) > 0) {
+      actions.push("Review TypeScript errors - check type annotations and assignments");
     }
 
-    // ESLint-specific advice
-    if (grouped["eslint"]?.length > 0) {
-      const eslintFixable = grouped["eslint"].filter((r) => r.fixable).length;
-      if (eslintFixable > 0) {
-        actions.push(`4. Run \`eslint --fix\` to auto-fix ${eslintFixable} ESLint issue(s)`);
-      }
+    const eslintFixable = (grouped["eslint"] ?? []).filter((result) => result.fixable).length;
+    if (eslintFixable > 0) {
+      actions.push(`Run \`eslint --fix\` to auto-fix ${eslintFixable} ESLint issue(s)`);
     }
 
-    // AI instruction-specific advice
-    if (grouped["ai-instructions"]?.length > 0) {
-      actions.push(
-        `5. Review AI instruction violations - these rules come from CLAUDE.md, AGENTS.md, or similar files`
-      );
+    if (omitted > 0) {
+      actions.push(`${omitted} result(s) were omitted above; fix the listed ones, then re-run the check`);
     }
 
-    lines.push(actions.join("\n"));
+    lines.push(actions.map((action, index) => `${index + 1}. ${action}`).join("\n"));
     lines.push("");
   }
 
   // File list for context
-  const affectedFiles = [...new Set(summary.results.map((r) => r.file))].sort();
-  if (affectedFiles.length > 0 && affectedFiles.length <= 20) {
-    lines.push("### Affected Files");
+  const affectedFiles = [...new Set(listed.map((result) => result.file).filter(Boolean))].sort();
+  if (affectedFiles.length > 0) {
+    lines.push(`### Affected Files (${affectedFiles.length})`);
     lines.push("");
     lines.push("```");
-    for (const file of affectedFiles) {
+    for (const file of affectedFiles.slice(0, 20)) {
       lines.push(file);
     }
-    lines.push("```");
-    lines.push("");
-  } else if (affectedFiles.length > 20) {
-    lines.push(`### Affected Files (${affectedFiles.length} total)`);
-    lines.push("");
-    lines.push("```");
-    for (const file of affectedFiles.slice(0, 15)) {
-      lines.push(file);
+    if (affectedFiles.length > 20) {
+      lines.push(`... and ${affectedFiles.length - 20} more files`);
     }
-    lines.push(`... and ${affectedFiles.length - 15} more files`);
     lines.push("```");
     lines.push("");
   }

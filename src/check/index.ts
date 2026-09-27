@@ -1,6 +1,6 @@
 import { loadConfigWithDiagnostics, getEffectivePatterns } from "./config-loader";
 import { runAllTools } from "./runners";
-import { runAllRules } from "./rules";
+import { runAllRules, summarizeRules } from "./rules";
 import { format, type OutputFormat } from "./formatters";
 import type { CheckOptions, CheckResult, CheckSummary } from "./types";
 import { createRuleContext } from "./rules/utils/rule-context";
@@ -43,7 +43,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
 
   // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
-  const { config, diagnostics } = loadConfigWithDiagnostics(cwd, configPath);
+  const { config, diagnostics, disabledRules } = loadConfigWithDiagnostics(cwd, configPath);
   onProgress?.("Loading configuration", "done");
 
   // Get effective include/exclude patterns
@@ -109,6 +109,8 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     bySource: groupBySource(allResults),
     diagnostics,
     runners: toolResults.summaries,
+    rules: summarizeRules(customRules, ruleResults.byRule),
+    disabledRules,
   };
 
   return summary;

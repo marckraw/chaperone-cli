@@ -58,6 +58,25 @@ export interface RunnerSummary {
 }
 
 /**
+ * What happened to one custom rule during a check.
+ */
+export interface RuleSummary {
+  id: string;
+  type: string;
+  /**
+   * passed/failed: the rule checked at least one file (or does not scan files);
+   * no-files: its file globs matched nothing, so it checked nothing
+   */
+  status: "passed" | "failed" | "no-files";
+  /** Files selected by the rule's globs (undefined for rules that do not scan files) */
+  filesChecked?: number;
+  errors: number;
+  warnings: number;
+  /** Scope notices, e.g. a glob that matched no files */
+  notices: string[];
+}
+
+/**
  * Summary of check results
  */
 export interface CheckSummary {
@@ -72,6 +91,10 @@ export interface CheckSummary {
   diagnostics?: ConfigDiagnostic[];
   /** What each tool runner did, including why it was skipped */
   runners?: RunnerSummary[];
+  /** What each custom rule did, including rules whose globs matched no files */
+  rules?: RuleSummary[];
+  /** Rules switched off with `disabled: true` */
+  disabledRules?: Array<{ id: string; source: string }>;
 }
 
 /**
