@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { loadConfigWithDiagnostics, getEffectivePatterns } from "./config-loader";
 import { runAllTools } from "./runners";
 import { runAllRules, summarizeRules } from "./rules";
@@ -40,7 +41,8 @@ export interface CheckOptionsWithProgress extends CheckOptions {
  */
 export async function check(options: CheckOptionsWithProgress): Promise<CheckSummary> {
   const startTime = Date.now();
-  const { cwd, configPath, fix, include, exclude, since, onProgress, onDebug } = options;
+  const { configPath, fix, include, exclude, since, onProgress, onDebug } = options;
+  const cwd = resolve(options.cwd);
 
   // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
