@@ -2,7 +2,7 @@ import { generateObject } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { AIInstructionFile } from "../check/types";
 import { extractionResponseSchema } from "./schemas";
-import type { ExtractionResponse } from "./schemas";
+import type { ExtractionResponse } from "./types";
 import { SYSTEM_PROMPT, createUserPrompt } from "./prompts";
 
 export interface ExtractRulesOptions {
@@ -47,45 +47,4 @@ export async function extractRulesFromInstructions(
   });
 
   return object;
-}
-
-/**
- * Validate that extracted rules have valid regex patterns
- */
-export function validateExtractedRules(
-  response: ExtractionResponse,
-  onProgress?: (message: string) => void
-): ExtractionResponse {
-  const validRules: ExtractionResponse["rules"] = [];
-  const invalidRules: Array<{ rule: (typeof response.rules)[0]; error: string }> = [];
-
-  for (const rule of response.rules) {
-    if ("pattern" in rule && rule.pattern) {
-      try {
-        new RegExp(rule.pattern);
-        validRules.push(rule);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        invalidRules.push({ rule, error: message });
-        onProgress?.(`Warning: Invalid regex in rule "${rule.id}": ${message}`);
-      }
-    } else {
-      validRules.push(rule);
-    }
-  }
-
-  const skipped = response.skipped ?? [];
-
-  for (const { rule, error } of invalidRules) {
-    skipped.push({
-      text: "originalText" in rule ? rule.originalText : rule.id,
-      reason: `Invalid regex pattern: ${error}`,
-    });
-  }
-
-  return {
-    rules: validRules,
-    summary: response.summary,
-    skipped: skipped.length > 0 ? skipped : undefined,
-  };
 }

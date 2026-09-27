@@ -76,7 +76,7 @@ const pairShape = z.object({
   to: z.string().describe("Replacement producing the companion path"),
 });
 
-export const RULE_SCHEMAS: Record<RuleType, z.AnyZodObject> = {
+export const RULE_SCHEMAS = {
   regex: z.object({
     ...baseRuleShape,
     type: z.literal("regex"),
@@ -239,7 +239,7 @@ export const RULE_SCHEMAS: Record<RuleType, z.AnyZodObject> = {
     directive: nonEmpty,
     allowedExportNamePatterns: stringList.min(1, "must contain at least one pattern"),
   }),
-};
+} satisfies Record<RuleType, z.AnyZodObject>;
 
 const toolConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -680,7 +680,7 @@ export function validateRule(raw: unknown, source: string, path: PathSegment[]):
   }
 
   const ruleType = type as RuleType;
-  const schema = RULE_SCHEMAS[ruleType];
+  const schema: z.AnyZodObject = RULE_SCHEMAS[ruleType];
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
