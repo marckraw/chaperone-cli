@@ -167,3 +167,27 @@ describe("extractImports", () => {
     expect(entries.map((entry) => [entry.source, entry.line])).toEqual([["./Button.svelte", 2]]);
   });
 });
+
+describe("extractImports: TypeScript import types", () => {
+  test("import() in type positions is type-only, runtime import() is not", () => {
+    const code = `
+      type A = typeof import("./a");
+      let b: import("./b").B;
+      const c = value as import("./c").C;
+      type D = string | import("./d").D;
+      vi.mock("fs", async (orig) => ({ ...(await orig<typeof import("fs")>()) }));
+      const lazy = import("./lazy").then((m) => m.default);
+      const plain = import("./plain");
+    `;
+    const entries = extractImports(code, { filePath: "file.ts" });
+    expect(entries.map((entry) => [entry.source, entry.isTypeImport])).toEqual([
+      ["./a", true],
+      ["./b", true],
+      ["./c", true],
+      ["./d", true],
+      ["fs", true],
+      ["./lazy", false],
+      ["./plain", false],
+    ]);
+  });
+});

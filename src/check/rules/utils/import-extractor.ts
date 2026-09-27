@@ -43,6 +43,35 @@ const staticString = (token: Token | undefined): string | null => {
   return null;
 };
 
+const TYPE_CONTEXT_KEYWORDS = new Set(["typeof", "keyof", "as", "satisfies", "extends", "infer"]);
+const PROMISE_MEMBERS = new Set(["then", "catch", "finally"]);
+
+/**
+ * Whether `import("x")` at `index` is a TypeScript type (`typeof import("x")`,
+ * `import("x").Type`, `value as import("x").T`) rather than a runtime import.
+ */
+function isTypePositionImport(tokens: Token[], index: number): boolean {
+  const previous = tokens[index - 1];
+  if (previous?.type === "name" && TYPE_CONTEXT_KEYWORDS.has(previous.value)) return true;
+  if (isPunct(previous, "|") || isPunct(previous, "&")) return true;
+
+  // Find the closing parenthesis of import( ... )
+  let depth = 0;
+  let close = -1;
+  for (let cursor = index + 1; cursor < tokens.length; cursor++) {
+    if (isPunct(tokens[cursor], "(")) depth++;
+    else if (isPunct(tokens[cursor], ")") && --depth === 0) {
+      close = cursor;
+      break;
+    }
+  }
+  if (close === -1) return false;
+
+  // import("x").Member: only Promise methods make sense on a runtime import()
+  const member = tokens[close + 2];
+  return isPunct(tokens[close + 1], ".") && isName(member) && !PROMISE_MEMBERS.has(member!.value);
+}
+
 /** `type X`, `type X as Y` inside braces (but not a binding named "type") */
 function isInlineTypeSpecifier(specifier: Token[]): boolean {
   if (!isName(specifier[0], "type") || specifier.length < 2) return false;
@@ -190,10 +219,10 @@ export function extractImports(content: string, options?: ExtractOptions): Impor
     if (token.value === "import") {
       const next = tokens[index + 1];
 
-      // import("x")
+      // import("x"), or a TypeScript import type: typeof import("x"), import("x").T
       if (isPunct(next, "(")) {
         const specifier = staticString(tokens[index + 2]);
-        if (specifier !== null) add(token, specifier, "dynamic", false);
+        if (specifier !== null) add(token, specifier, "dynamic", isTypePositionImport(tokens, index));
         continue;
       }
 
