@@ -81,7 +81,7 @@ Overriding a preset rule replaces it entirely. If you override a preset rule to 
 
 Regex rules now run with the `m` flag by default, so `^\s*export\s+default\b` finds a default export on any line, not only on line 1. This can surface **new violations** for forbidden patterns that use `^` or `$`.
 
-If a rule relied on `^` meaning "start of file" (typically a `mustMatch: true` header check), set `"flags": ""`. To keep per-line anchors and add other flags, include `m`: `"flags": "im"`. Also: a pattern that can match an empty string (for example `TODO|`) only reports non-empty matches now, and validation warns about it.
+If a rule relied on `^` meaning "start of file" (typically a `mustMatch: true` header check), set `"flags": ""`. To keep per-line anchors and add other flags, include `m`: `"flags": "im"`. Also: a pattern that can match an empty string (for example `TODO|`) used to hang the check; it now only reports non-empty matches, and validation warns about it. Lookahead-only patterns such as `(?=console\.log)` (which also used to hang) now report normally.
 
 ### 6. Excludes are merged with the defaults and follow `.gitignore` rules
 

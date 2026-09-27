@@ -1,4 +1,4 @@
-import { createLineIndex, nonEmptyMatches, truncate } from "../../utils/text";
+import { createLineIndex, matchesEmptyString, regexMatches, truncate } from "../../utils/text";
 import type { CheckResult, RegexRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { getRuleContext } from "./utils/rule-context";
@@ -55,6 +55,10 @@ export async function runRegexRule(
   // Legacy alias, normally normalized at load time
   const mustMatch = rule.mustMatch ?? (rule.forbidden === undefined ? false : !rule.forbidden);
 
+  // Zero-length matches are real for lookaheads such as (?=console\.log), but noise for
+  // patterns that match the empty string anywhere (such as "TODO|"), which are warned about.
+  const includeEmpty = !matchesEmptyString(regex);
+
   for (const file of context.inScope(files)) {
     const content = index.read(file);
     if (content === null) {
@@ -62,8 +66,8 @@ export async function runRegexRule(
     }
 
     if (mustMatch) {
-      // Pattern MUST be present (zero-length matches do not count)
-      const first = nonEmptyMatches(content, regex).next();
+      // Pattern MUST be present
+      const first = regexMatches(content, regex, { includeEmpty }).next();
       if (first.done) {
         results.push({
           file,
@@ -82,7 +86,7 @@ export async function runRegexRule(
 
     // Pattern must NOT be present (default)
     const lines = createLineIndex(content);
-    for (const match of nonEmptyMatches(content, regex)) {
+    for (const match of regexMatches(content, regex, { includeEmpty })) {
       // Point at the first non-whitespace character: with `^\s*...` the match can start on a blank line
       const text = match[0];
       const leading = text.length - text.trimStart().length;
@@ -107,7 +111,8 @@ export async function runRegexRule(
         severity: rule.severity,
         source: "custom",
         context: {
-          matchedText: truncate(text.trim() || text),
+          // A zero-length match (lookahead) shows the rest of the line it points at
+          matchedText: text === "" ? truncate(restOfLine(content, offset), 80) : truncate(text.trim() || text),
           surroundingLines,
         },
       });
@@ -124,6 +129,11 @@ export async function runRegexRule(
     results,
     filesChecked: files.length,
   };
+}
+
+function restOfLine(content: string, offset: number): string {
+  const lineEnd = content.indexOf("\n", offset);
+  return content.slice(offset, lineEnd === -1 ? undefined : lineEnd).replace(/\r$/, "");
 }
 
 /**

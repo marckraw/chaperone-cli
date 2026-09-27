@@ -144,3 +144,14 @@ describe("regex rule validation", () => {
     expect(error!.message).toContain("not a valid regular expression");
   });
 });
+
+describe("runRegexRule: zero-length matches", () => {
+  test("lookahead-only patterns report their matches", async () => {
+    const cwd = makeProject({ "src/a.ts": "const a = 1;\nconsole.log(a);\n" });
+    const result = await runRegexRule(rule({ pattern: "(?=console\\.log)" }), { cwd, ...OPTIONS });
+    expect(result.results.map((entry) => [entry.line, entry.context?.matchedText])).toEqual([[2, "console.log(a);"]]);
+
+    const required = await runRegexRule(rule({ pattern: "(?=console\\.log)", mustMatch: true }), { cwd, ...OPTIONS });
+    expect(required.results).toEqual([]);
+  });
+});

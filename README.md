@@ -285,7 +285,7 @@ Forbid (default) or require a pattern in files.
 | `reportOnce` | No | Report only the first match per file. |
 | `forbidden` | No | **Deprecated** alias: `forbidden: true` means `mustMatch: false` (a warning suggests the replacement). |
 
-Each violation points at the first non-whitespace character of the match and includes the matched text and the surrounding lines. Zero-length matches are ignored: a pattern such as `TODO|` only reports real `TODO`s (and validation warns about it), and a zero-length match never satisfies `mustMatch`.
+Each violation points at the first non-whitespace character of the match and includes the matched text and the surrounding lines. A pattern that can match an empty string, such as `TODO|`, would match everywhere: validation warns about it and its zero-length matches are ignored, so only real `TODO`s are reported. Lookaheads such as `(?=console\.log)` work normally.
 
 ### `file-pairing`
 

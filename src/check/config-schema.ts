@@ -472,7 +472,7 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
       if (typeof pattern === "string" && compileCheck(pattern, effectiveFlags) === null) {
         if (new RegExp(pattern, effectiveFlags).test("")) {
           sink.warning(
-            `"pattern" /${pattern}/ can match an empty string (e.g. a trailing "|"); empty matches are ignored, so only non-empty matches count`,
+            `"pattern" /${pattern}/ can match an empty string (e.g. a trailing "|"), so it would match everywhere; its zero-length matches are ignored and only non-empty matches count`,
             ["pattern"]
           );
         }

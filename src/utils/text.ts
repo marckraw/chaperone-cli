@@ -63,22 +63,42 @@ export function countLines(content: string): number {
 }
 
 /**
- * Iterate the non-empty matches of a global regex.
- * Zero-length matches are skipped (and never cause an infinite loop).
+ * Iterate the matches of a global regex without ever looping forever on a
+ * zero-length match. Zero-length matches are skipped unless `includeEmpty` is set.
  */
-export function* nonEmptyMatches(content: string, regex: RegExp): Generator<RegExpExecArray> {
+export function* regexMatches(
+  content: string,
+  regex: RegExp,
+  options: { includeEmpty?: boolean } = {}
+): Generator<RegExpExecArray> {
   if (!regex.global) {
-    throw new Error("nonEmptyMatches requires a global regex");
+    throw new Error("regexMatches requires a global regex");
   }
   regex.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(content)) !== null) {
     if (match[0] === "") {
       regex.lastIndex = advanceIndex(content, regex.lastIndex, regex.unicode || regex.flags.includes("v"));
-      continue;
+      if (!options.includeEmpty) continue;
     }
     yield match;
   }
+}
+
+/**
+ * Iterate the non-empty matches of a global regex.
+ * Zero-length matches are skipped (and never cause an infinite loop).
+ */
+export function nonEmptyMatches(content: string, regex: RegExp): Generator<RegExpExecArray> {
+  return regexMatches(content, regex, { includeEmpty: false });
+}
+
+/**
+ * Whether a pattern can match the empty string (e.g. "TODO|"): it would match at
+ * every position, so its zero-length matches are noise.
+ */
+export function matchesEmptyString(regex: RegExp): boolean {
+  return new RegExp(regex.source, regex.flags.replace(/[gy]/g, "")).test("");
 }
 
 function advanceIndex(content: string, index: number, unicode: boolean): number {
