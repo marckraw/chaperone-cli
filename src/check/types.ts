@@ -173,6 +173,8 @@ export interface RegexRule extends BaseRule, AIGeneratedMetadata {
   message: string;
   mustMatch?: boolean; // true = must exist, false = must NOT exist (default)
   reportOnce?: boolean; // true = report only first match per file (useful for file-level rules like "must use .tsx")
+  /** RegExp flags (default "m": ^ and $ match per line). "g" is always added. */
+  flags?: string;
   /** @deprecated Use mustMatch. `forbidden: true` means `mustMatch: false`. Normalized away at load time. */
   forbidden?: boolean;
 }

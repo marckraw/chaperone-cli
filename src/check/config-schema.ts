@@ -85,6 +85,10 @@ export const RULE_SCHEMAS: Record<RuleType, z.AnyZodObject> = {
     message: z.string().describe("Violation message"),
     mustMatch: z.boolean().optional().describe("true: pattern must be present; false (default): must be absent"),
     reportOnce: z.boolean().optional().describe("Report only the first match per file"),
+    flags: z
+      .string()
+      .optional()
+      .describe('RegExp flags (default "m": ^ and $ match at line boundaries). "g" is added automatically'),
     forbidden: z.boolean().optional().describe("Deprecated alias: forbidden: true means mustMatch: false"),
   }),
   "file-pairing": z.object({
@@ -454,7 +458,25 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
   switch (type) {
     case "regex": {
       glob(["files"]);
-      regex(["pattern"]);
+      const flags = rule["flags"];
+      if (flags !== undefined && typeof flags === "string") {
+        const invalid = [...flags].filter((flag) => !"dimsuvgy".includes(flag));
+        if (invalid.length > 0) {
+          sink.error(`"flags" contains unsupported flag(s) "${invalid.join("")}"; allowed: d, i, m, s, u, v`, ["flags"]);
+          break;
+        }
+      }
+      const effectiveFlags = typeof flags === "string" ? flags.replace(/[gy]/g, "") : "m";
+      regex(["pattern"], effectiveFlags);
+      const pattern = rule["pattern"];
+      if (typeof pattern === "string" && compileCheck(pattern, effectiveFlags) === null) {
+        if (new RegExp(pattern, effectiveFlags).test("")) {
+          sink.warning(
+            `"pattern" /${pattern}/ can match an empty string (e.g. a trailing "|"); empty matches are ignored, so only non-empty matches count`,
+            ["pattern"]
+          );
+        }
+      }
       if (typeof rule["forbidden"] === "boolean") {
         const forbidden = rule["forbidden"];
         if (typeof rule["mustMatch"] === "boolean" && rule["mustMatch"] === forbidden) {
