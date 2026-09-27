@@ -3,10 +3,12 @@
 import { VERSION } from "./version";
 import { runInit } from "./init";
 import { checkAndFormat, createCheckOptions, ConfigError, formatDiagnostic } from "./check";
-import { formatAI } from "./check/formatters";
+import { formatAI, OUTPUT_FORMATS } from "./check/formatters";
 import type { OutputFormat } from "./check/formatters";
 import { copyToClipboard } from "./utils/clipboard";
 import { createSpinner } from "./utils/spinner";
+import { createPalette, shouldUseColor } from "./utils/ansi";
+import { EXIT, parseArgs, UsageError, type FlagSpec } from "./utils/args";
 import { runAnalyze } from "./analyze";
 import { getUpdateNotification, refreshUpdateCache } from "./update-notifier";
 
@@ -28,11 +30,11 @@ CHECK OPTIONS:
   --cwd <path>          Working directory (default: current directory)
   --fix                 Auto-fix issues where possible
   --format, -f <type>   Output format: text, json, ai (default: text)
-  --quiet, -q           Only show errors
+  --quiet, -q           List only errors (all formats)
   --no-warnings         Hide warnings, show only errors
   --copy                Copy remaining errors to clipboard (AI format)
   --no-progress         Disable progress spinner
-  --debug               Show detailed rule execution info
+  --debug               Show detailed rule execution info (stderr)
 
 GENERAL OPTIONS:
   --help, -h            Show help
@@ -42,6 +44,11 @@ ANALYZE OPTIONS:
   --dry-run             Preview extracted rules without saving
   --force               Replace existing AI-extracted rules
   --verbose, -v         Show detailed output
+
+EXIT CODES:
+  0  passed
+  1  the check found errors
+  2  configuration error, usage error or internal error
 
 EXAMPLES:
   chaperone init
@@ -55,83 +62,6 @@ EXAMPLES:
   chaperone version
 `;
 
-function showHelp(): void {
-  console.log(HELP_TEXT);
-}
-
-function showVersion(): void {
-  console.log(`chaperone v${VERSION}`);
-}
-
-interface CheckArgs {
-  config?: string;
-  cwd?: string;
-  fix?: boolean;
-  format?: OutputFormat;
-  quiet?: boolean;
-  copy?: boolean;
-  noProgress?: boolean;
-  noWarnings?: boolean;
-  debug?: boolean;
-  help?: boolean;
-}
-
-function parseCheckArgs(args: string[]): CheckArgs {
-  const result: CheckArgs = {};
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    switch (arg) {
-      case "--help":
-      case "-h":
-        result.help = true;
-        break;
-
-      case "--config":
-      case "-c":
-        result.config = args[++i];
-        break;
-
-      case "--cwd":
-        result.cwd = args[++i];
-        break;
-
-      case "--fix":
-        result.fix = true;
-        break;
-
-      case "--format":
-      case "-f":
-        result.format = args[++i] as OutputFormat;
-        break;
-
-      case "--quiet":
-      case "-q":
-        result.quiet = true;
-        break;
-
-      case "--copy":
-        result.copy = true;
-        break;
-
-      case "--no-progress":
-        result.noProgress = true;
-        break;
-
-      case "--no-warnings":
-        result.noWarnings = true;
-        break;
-
-      case "--debug":
-        result.debug = true;
-        break;
-    }
-  }
-
-  return result;
-}
-
 const CHECK_HELP_TEXT = `
 chaperone check - Check codebase for convention violations
 
@@ -143,12 +73,22 @@ OPTIONS:
   --cwd <path>          Working directory (default: current directory)
   --fix                 Auto-fix issues where possible
   --format, -f <type>   Output format: text, json, ai (default: text)
-  --quiet, -q           Only show errors
+  --quiet, -q           List only errors (all formats)
   --no-warnings         Hide warnings, show only errors
   --copy                Copy remaining errors to clipboard (AI format)
   --no-progress         Disable progress spinner
-  --debug               Show detailed rule execution info
+  --debug               Show detailed rule execution info (stderr)
   --help, -h            Show this help message
+
+OUTPUT:
+  Results go to stdout; progress, debug output and notices go to stderr.
+  json and ai output never contain ANSI codes, and text output is coloured
+  only on a terminal (NO_COLOR and FORCE_COLOR are honoured).
+
+EXIT CODES:
+  0  passed
+  1  the check found errors
+  2  configuration error, usage error or internal error
 
 EXAMPLES:
   chaperone check
@@ -158,42 +98,100 @@ EXAMPLES:
   chaperone check --debug
 `;
 
+const CHECK_FLAGS = {
+  help: { names: ["--help", "-h"], type: "boolean" },
+  config: { names: ["--config", "-c"], type: "string" },
+  cwd: { names: ["--cwd"], type: "string" },
+  fix: { names: ["--fix"], type: "boolean" },
+  format: { names: ["--format", "-f"], type: "string", choices: OUTPUT_FORMATS },
+  quiet: { names: ["--quiet", "-q"], type: "boolean" },
+  copy: { names: ["--copy"], type: "boolean" },
+  noProgress: { names: ["--no-progress"], type: "boolean" },
+  noWarnings: { names: ["--no-warnings"], type: "boolean" },
+  debug: { names: ["--debug"], type: "boolean" },
+} satisfies Record<string, FlagSpec>;
+
+function printConfigError(error: ConfigError, format: OutputFormat): number {
+  const errors = error.diagnostics.filter((diagnostic) => diagnostic.level === "error");
+  const warnings = error.diagnostics.filter((diagnostic) => diagnostic.level === "warning");
+
+  if (format === "json") {
+    // Keep stdout parseable for machines even when the run cannot start.
+    console.log(
+      JSON.stringify(
+        { success: false, error: "invalid-config", exitCode: EXIT.ERROR, diagnostics: error.diagnostics },
+        null,
+        2
+      )
+    );
+  }
+
+  const colors = createPalette(shouldUseColor(process.stderr));
+  const counts = [
+    `${errors.length} error${errors.length === 1 ? "" : "s"}`,
+    ...(warnings.length > 0 ? [`${warnings.length} warning${warnings.length === 1 ? "" : "s"}`] : []),
+  ].join(", ");
+  console.error(`${colors.red}Invalid configuration${colors.reset} (${counts}):`);
+  for (const diagnostic of errors) {
+    console.error(`  ${colors.red}error${colors.reset}   ${formatDiagnostic(diagnostic)}`);
+  }
+  for (const diagnostic of warnings) {
+    console.error(`  ${colors.yellow}warning${colors.reset} ${formatDiagnostic(diagnostic)}`);
+  }
+  console.error("");
+  console.error("Nothing was checked. Fix the configuration and run again (exit code 2).");
+  return EXIT.ERROR;
+}
+
 async function runCheck(args: string[]): Promise<number> {
-  const parsedArgs = parseCheckArgs(args);
+  let parsedArgs;
+  try {
+    parsedArgs = parseArgs(args, CHECK_FLAGS);
+  } catch (error) {
+    if (error instanceof UsageError) {
+      console.error(`Error: ${error.message}`);
+      console.error('Run "chaperone check --help" for usage information.');
+      return EXIT.ERROR;
+    }
+    throw error;
+  }
 
   if (parsedArgs.help) {
     console.log(CHECK_HELP_TEXT);
-    return 0;
+    return EXIT.OK;
   }
 
-  const showProgress = !parsedArgs.noProgress && parsedArgs.format !== "json";
+  const format = (parsedArgs.format ?? "text") as OutputFormat;
+  const interactive = Boolean(process.stdout.isTTY) && Boolean(process.stderr.isTTY);
+  const showProgress = format === "text" && interactive && !parsedArgs.noProgress && !parsedArgs.quiet;
+  const stderrColors = createPalette(shouldUseColor(process.stderr));
 
   // Track completed steps to avoid duplicates
   const completedSteps = new Set<string>();
-  const spinner = createSpinner();
+  const spinner = createSpinner("", { enabled: showProgress });
 
   const options = createCheckOptions({
     cwd: parsedArgs.cwd ?? process.cwd(),
     configPath: parsedArgs.config,
     fix: parsedArgs.fix ?? false,
-    format: parsedArgs.format ?? "text",
+    format,
     quiet: parsedArgs.quiet ?? false,
     noWarnings: parsedArgs.noWarnings ?? false,
     debug: parsedArgs.debug ?? false,
+    color: format === "text" && shouldUseColor(process.stdout),
     onProgress: showProgress
       ? (step, status) => {
           if (status === "start") {
             spinner.start(step);
-          } else if (status === "done") {
-            if (!completedSteps.has(step)) {
-              completedSteps.add(step);
+          } else if (!completedSteps.has(step)) {
+            completedSteps.add(step);
+            if (status === "done") {
               spinner.succeed(step);
-            }
-          } else if (status === "skipped") {
-            if (!completedSteps.has(step)) {
-              completedSteps.add(step);
+            } else {
               spinner.stop();
-              console.log(`\x1b[33m○\x1b[0m ${step} \x1b[2m(skipped)\x1b[0m`);
+              spinner.log(
+                `${stderrColors.yellow}○${stderrColors.reset} ${step} ${stderrColors.dim}(skipped)${stderrColors.reset}`
+              );
             }
           }
         }
@@ -201,7 +199,7 @@ async function runCheck(args: string[]): Promise<number> {
     onDebug: parsedArgs.debug
       ? (message) => {
           spinner.stop();
-          console.log(`\x1b[2m${message}\x1b[0m`);
+          console.error(`${stderrColors.dim}${message}${stderrColors.reset}`);
         }
       : undefined,
   });
@@ -212,9 +210,9 @@ async function runCheck(args: string[]): Promise<number> {
     // Make sure spinner is stopped before output
     spinner.stop();
 
-    // Add a blank line before results
+    // Separate progress lines from the results
     if (showProgress) {
-      console.log("");
+      process.stderr.write("\n");
     }
 
     console.log(output);
@@ -226,26 +224,26 @@ async function runCheck(args: string[]): Promise<number> {
       const success = await copyToClipboard(clipboardContent);
 
       if (success) {
-        console.log("\n\x1b[32m✓\x1b[0m Remaining errors copied to clipboard (AI format)");
+        console.error(`\n${stderrColors.green}✓${stderrColors.reset} Remaining errors copied to clipboard (AI format)`);
       } else {
-        console.error("\n\x1b[31m✗\x1b[0m Failed to copy to clipboard");
+        console.error(`\n${stderrColors.red}✗${stderrColors.reset} Failed to copy to clipboard`);
       }
     }
 
-    return summary.success ? 0 : 1;
+    return summary.success ? EXIT.OK : EXIT.VIOLATIONS;
   } catch (error) {
     spinner.stop();
     if (error instanceof ConfigError) {
-      const errors = error.diagnostics.filter((diagnostic) => diagnostic.level === "error");
-      console.error(`Invalid configuration (${errors.length} error${errors.length === 1 ? "" : "s"}):`);
-      for (const diagnostic of error.diagnostics) {
-        console.error(`  ${diagnostic.level === "error" ? "error" : "warning"}: ${formatDiagnostic(diagnostic)}`);
-      }
-      return 2;
+      return printConfigError(error, format);
     }
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
-    return 2;
+    if (format === "json") {
+      console.log(
+        JSON.stringify({ success: false, error: "internal-error", exitCode: EXIT.ERROR, message }, null, 2)
+      );
+    }
+    return EXIT.ERROR;
   }
 }
 
@@ -262,22 +260,22 @@ async function main(): Promise<void> {
   // Fire-and-forget: refresh cache for next run
   refreshUpdateCache().catch(() => {});
 
-  let exitCode = 0;
+  let exitCode: number = EXIT.OK;
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
-    showHelp();
+    console.log(HELP_TEXT);
   } else if (command === "version" || command === "--version" || command === "-v") {
-    showVersion();
+    console.log(`chaperone v${VERSION}`);
   } else if (command === "check") {
     exitCode = await runCheck(args.slice(1));
   } else if (command === "init") {
-    await runInit(args.slice(1));
+    exitCode = await runInit(args.slice(1));
   } else if (command === "analyze") {
     exitCode = await runAnalyze(args.slice(1));
   } else {
     console.error(`Unknown command: ${command}`);
     console.error('Run "chaperone help" for usage information');
-    exitCode = 1;
+    exitCode = EXIT.ERROR;
   }
 
   // Print update notice last, to stderr

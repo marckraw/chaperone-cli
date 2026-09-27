@@ -129,6 +129,7 @@ export async function checkAndFormat(options: CheckOptionsWithProgress): Promise
   const output = format(summary, options.format as OutputFormat, {
     quiet: options.quiet,
     noWarnings: options.noWarnings,
+    color: options.color,
   });
 
   return { summary, output };

@@ -1,5 +1,10 @@
 import type { CheckResult, CheckSummary } from "../types";
 
+export interface AIFormatOptions {
+  /** List only errors (counts still include warnings) */
+  quiet?: boolean;
+}
+
 /**
  * Group results by source
  */
@@ -72,8 +77,11 @@ function formatResultForAI(result: CheckResult): string {
  * Format check results in AI-optimized markdown format
  * Designed for consumption by LLMs like Claude, GPT, etc.
  */
-export function formatAI(summary: CheckSummary, noWarnings = false): string {
+export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): string {
   const lines: string[] = [];
+  const listed = options.quiet
+    ? summary.results.filter((result) => result.severity === "error")
+    : summary.results;
 
   // Header
   lines.push("## Chaperone Check Report");
@@ -88,13 +96,25 @@ export function formatAI(summary: CheckSummary, noWarnings = false): string {
   lines.push(`**Duration:** ${(summary.duration / 1000).toFixed(2)}s`);
   lines.push("");
 
-  if (summary.results.length === 0) {
-    lines.push("No issues found.");
+  const configWarnings = (summary.diagnostics ?? []).filter((d) => d.level === "warning");
+  if (configWarnings.length > 0) {
+    lines.push("### Configuration Warnings");
+    lines.push("");
+    for (const diagnostic of configWarnings) {
+      const location = [diagnostic.source, diagnostic.path].filter(Boolean).join(" › ");
+      const rule = diagnostic.ruleId ? ` (rule \`${diagnostic.ruleId}\`)` : "";
+      lines.push(`- ${location}${rule}: ${diagnostic.message}`);
+    }
+    lines.push("");
+  }
+
+  if (listed.length === 0) {
+    lines.push(summary.results.length === 0 ? "No issues found." : "No errors found (warnings hidden by --quiet).");
     return lines.join("\n");
   }
 
   // Group results by source for organized output
-  const grouped = groupBySource(summary.results);
+  const grouped = groupBySource(listed);
   const sourceOrder = ["typescript", "eslint", "prettier", "custom", "ai-instructions"];
 
   for (const source of sourceOrder) {

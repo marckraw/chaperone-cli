@@ -1,24 +1,19 @@
+import { createPalette, type Palette } from "../../utils/ansi";
 import type { CheckResult, CheckSummary } from "../types";
 
-/**
- * ANSI color codes
- */
-const colors = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  white: "\x1b[37m",
-};
+export interface TextFormatOptions {
+  /** List only errors (counts still include warnings) */
+  quiet?: boolean;
+  /** Hide warnings entirely */
+  noWarnings?: boolean;
+  /** Emit ANSI colours (default: false) */
+  color?: boolean;
+}
 
 /**
  * Format a single check result as text
  */
-function formatResult(result: CheckResult): string {
+function formatResult(result: CheckResult, colors: Palette): string {
   const severity =
     result.severity === "error"
       ? `${colors.red}ERROR${colors.reset}`
@@ -106,7 +101,9 @@ function groupBySource(results: CheckResult[]): Record<string, CheckResult[]> {
 /**
  * Format check results as human-readable text
  */
-export function formatText(summary: CheckSummary, quiet = false, noWarnings = false): string {
+export function formatText(summary: CheckSummary, options: TextFormatOptions = {}): string {
+  const { quiet = false, noWarnings = false } = options;
+  const colors = createPalette(options.color ?? false);
   const lines: string[] = [];
 
   // Header
@@ -129,6 +126,18 @@ export function formatText(summary: CheckSummary, quiet = false, noWarnings = fa
   }
   lines.push(`${colors.dim}Duration:${colors.reset} ${(summary.duration / 1000).toFixed(2)}s`);
   lines.push("");
+
+  // Configuration warnings
+  const configWarnings = (summary.diagnostics ?? []).filter((d) => d.level === "warning");
+  if (configWarnings.length > 0) {
+    lines.push(`${colors.bold}Configuration warnings:${colors.reset}`);
+    for (const diagnostic of configWarnings) {
+      const location = [diagnostic.source, diagnostic.path].filter(Boolean).join(" › ");
+      const rule = diagnostic.ruleId ? ` (rule "${diagnostic.ruleId}")` : "";
+      lines.push(`  ${colors.yellow}!${colors.reset} ${location}${rule}: ${diagnostic.message}`);
+    }
+    lines.push("");
+  }
 
   // Per-tool breakdown
   const grouped = groupBySource(summary.results);
@@ -194,7 +203,7 @@ export function formatText(summary: CheckSummary, quiet = false, noWarnings = fa
     lines.push("");
 
     for (const result of results) {
-      lines.push(formatResult(result));
+      lines.push(formatResult(result, colors));
       lines.push("");
     }
   }

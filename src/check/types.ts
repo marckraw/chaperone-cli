@@ -70,6 +70,8 @@ export interface CheckOptions {
   include?: string[];
   exclude?: string[];
   debug?: boolean;
+  /** ANSI colours in text output (default: false) */
+  color?: boolean;
 }
 
 /**

@@ -1,5 +1,9 @@
 /**
- * Terminal spinner for showing progress
+ * Terminal spinner for showing progress.
+ *
+ * The spinner writes to stderr by default so it never pollutes machine-readable
+ * output on stdout, and it is a no-op unless explicitly enabled (the CLI enables it
+ * only for text output on an interactive terminal).
  */
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -10,36 +14,65 @@ export interface Spinner {
   update: (text: string) => void;
   succeed: (text?: string) => void;
   fail: (text?: string) => void;
+  /** Print a line above the spinner (it keeps spinning) */
+  log: (line: string) => void;
   stop: () => void;
+}
+
+export interface SpinnerOptions {
+  /** Where to draw (default: process.stderr) */
+  stream?: { write(chunk: string): unknown };
+  /** When false every method is a no-op (default: false) */
+  enabled?: boolean;
 }
 
 /**
  * Create a terminal spinner
  */
-export function createSpinner(initialText = ""): Spinner {
+export function createSpinner(initialText = "", options: SpinnerOptions = {}): Spinner {
+  const { stream = process.stderr, enabled = false } = options;
+
+  if (!enabled) {
+    const noop = () => {};
+    return { start: noop, update: noop, succeed: noop, fail: noop, log: noop, stop: noop };
+  }
+
   let frameIndex = 0;
   let interval: ReturnType<typeof setInterval> | null = null;
   let currentText = initialText;
-  let isSpinning = false;
+  let active = false;
 
   const clearLine = () => {
-    process.stdout.write("\r\x1b[K");
+    stream.write("\r\x1b[K");
   };
 
   const render = () => {
-    if (!isSpinning) return;
-    const frame = SPINNER_FRAMES[frameIndex];
+    if (!active) return;
+    const frame = SPINNER_FRAMES[frameIndex] ?? "";
     clearLine();
-    process.stdout.write(`\x1b[36m${frame}\x1b[0m ${currentText}`);
+    stream.write(`\x1b[36m${frame}\x1b[0m ${currentText}`);
     frameIndex = (frameIndex + 1) % SPINNER_FRAMES.length;
+  };
+
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    if (interval) {
+      clearInterval(interval);
+      interval = null;
+    }
+    clearLine();
+    // Show cursor
+    stream.write("\x1b[?25h");
   };
 
   return {
     start(text?: string) {
       if (text) currentText = text;
-      isSpinning = true;
+      if (active) return;
+      active = true;
       // Hide cursor
-      process.stdout.write("\x1b[?25l");
+      stream.write("\x1b[?25l");
       render();
       interval = setInterval(render, SPINNER_INTERVAL);
     },
@@ -49,87 +82,22 @@ export function createSpinner(initialText = ""): Spinner {
     },
 
     succeed(text?: string) {
-      this.stop();
-      const finalText = text ?? currentText;
-      console.log(`\x1b[32m✓\x1b[0m ${finalText}`);
+      stop();
+      stream.write(`\x1b[32m✓\x1b[0m ${text ?? currentText}\n`);
     },
 
     fail(text?: string) {
-      this.stop();
-      const finalText = text ?? currentText;
-      console.log(`\x1b[31m✗\x1b[0m ${finalText}`);
+      stop();
+      stream.write(`\x1b[31m✗\x1b[0m ${text ?? currentText}\n`);
     },
 
-    stop() {
-      isSpinning = false;
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-      clearLine();
-      // Show cursor
-      process.stdout.write("\x1b[?25h");
-    },
-  };
-}
-
-/**
- * Simple progress indicator for multiple steps
- */
-export interface ProgressStep {
-  name: string;
-  status: "pending" | "running" | "done" | "skipped" | "error";
-}
-
-export function createProgress(steps: string[]): {
-  start: (stepIndex: number) => void;
-  complete: (stepIndex: number, skipped?: boolean) => void;
-  error: (stepIndex: number) => void;
-  finish: () => void;
-} {
-  const stepStates: ProgressStep[] = steps.map((name) => ({
-    name,
-    status: "pending",
-  }));
-
-  const spinner = createSpinner();
-
-  const getStatusIcon = (status: ProgressStep["status"]) => {
-    switch (status) {
-      case "running":
-        return "\x1b[36m⠋\x1b[0m";
-      case "done":
-        return "\x1b[32m✓\x1b[0m";
-      case "skipped":
-        return "\x1b[33m○\x1b[0m";
-      case "error":
-        return "\x1b[31m✗\x1b[0m";
-      default:
-        return "\x1b[2m○\x1b[0m";
-    }
-  };
-
-  return {
-    start(stepIndex: number) {
-      stepStates[stepIndex].status = "running";
-      spinner.start(stepStates[stepIndex].name);
+    log(line: string) {
+      const wasActive = active;
+      if (wasActive) clearLine();
+      stream.write(`${line}\n`);
+      if (wasActive) render();
     },
 
-    complete(stepIndex: number, skipped = false) {
-      stepStates[stepIndex].status = skipped ? "skipped" : "done";
-      const icon = getStatusIcon(stepStates[stepIndex].status);
-      spinner.stop();
-      const suffix = skipped ? " \x1b[2m(skipped)\x1b[0m" : "";
-      console.log(`${icon} ${stepStates[stepIndex].name}${suffix}`);
-    },
-
-    error(stepIndex: number) {
-      stepStates[stepIndex].status = "error";
-      spinner.fail(stepStates[stepIndex].name);
-    },
-
-    finish() {
-      spinner.stop();
-    },
+    stop,
   };
 }

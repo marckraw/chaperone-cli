@@ -5,6 +5,7 @@
 import { detectProjectTools } from "./detector";
 import { writeConfig, getConfigFilename } from "./config-writer";
 import { inputList } from "./prompts";
+import { EXIT, parseArgs, UsageError } from "../utils/args";
 import type {
   ChaperoneConfig,
   DetectionResult,
@@ -89,28 +90,19 @@ function buildConfig(
 
 /**
  * Parse init command arguments
+ *
+ * @throws {UsageError} for unknown options or missing values
  */
-export function parseInitArgs(args: string[]): InitOptions {
-  const options: InitOptions = {
-    cwd: process.cwd(),
-  };
+export function parseInitArgs(args: string[]): InitOptions & { help?: boolean } {
+  const parsed = parseArgs(args, {
+    help: { names: ["--help", "-h"], type: "boolean" },
+    yes: { names: ["--yes", "-y"], type: "boolean" },
+    force: { names: ["--force", "-f"], type: "boolean" },
+    dryRun: { names: ["--dry-run"], type: "boolean" },
+    cwd: { names: ["--cwd"], type: "string" },
+  });
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    if (arg === "--yes" || arg === "-y") {
-      options.yes = true;
-    } else if (arg === "--force" || arg === "-f") {
-      options.force = true;
-    } else if (arg === "--dry-run") {
-      options.dryRun = true;
-    } else if (arg === "--cwd" && args[i + 1]) {
-      options.cwd = args[i + 1];
-      i++; // Skip next arg
-    }
-  }
-
-  return options;
+  return { ...parsed, cwd: parsed.cwd ?? process.cwd() };
 }
 
 /**
@@ -138,16 +130,26 @@ EXAMPLES:
 }
 
 /**
- * Run the init command
+ * Run the init command. Returns the process exit code.
  */
-export async function runInit(args: string[]): Promise<void> {
-  // Check for help flag
-  if (args.includes("--help") || args.includes("-h")) {
-    showInitHelp();
-    return;
+export async function runInit(args: string[]): Promise<number> {
+  let options: ReturnType<typeof parseInitArgs>;
+  try {
+    options = parseInitArgs(args);
+  } catch (error) {
+    if (error instanceof UsageError) {
+      console.error(`Error: ${error.message}`);
+      console.error('Run "chaperone init --help" for usage information.');
+      return EXIT.ERROR;
+    }
+    throw error;
   }
 
-  const options = parseInitArgs(args);
+  if (options.help) {
+    showInitHelp();
+    return EXIT.OK;
+  }
+
   const cwd = options.cwd || process.cwd();
 
   console.log("🔍 Scanning project...");
@@ -178,7 +180,7 @@ export async function runInit(args: string[]): Promise<void> {
     console.log("");
     console.log(JSON.stringify(config, null, 2));
     console.log("");
-    return;
+    return EXIT.OK;
   }
 
   // Write configuration
@@ -191,10 +193,11 @@ export async function runInit(args: string[]): Promise<void> {
 
   if (result.success) {
     console.log(`✅ Configuration created!`);
-  } else {
-    console.error(`❌ ${result.message}`);
-    process.exit(1);
+    return EXIT.OK;
   }
+
+  console.error(`❌ ${result.message}`);
+  return EXIT.ERROR;
 }
 
 // Re-export types and functions for external use

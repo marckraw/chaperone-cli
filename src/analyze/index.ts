@@ -6,6 +6,7 @@ import type { ChaperoneConfig, CustomRule } from "../check/types";
 import { mergeRules, countAIRules } from "./config-merger";
 import { extractRulesFromInstructions, validateExtractedRules } from "./llm-client";
 import type { AnalyzeOptions, AnalyzeResult } from "./types";
+import { EXIT, parseArgs, UsageError } from "../utils/args";
 
 const CONFIG_FILENAME = ".chaperone.json";
 
@@ -178,7 +179,17 @@ function truncate(str: string, maxLength: number): string {
  * CLI entry point for analyze command
  */
 export async function runAnalyze(args: string[]): Promise<number> {
-  const options = parseAnalyzeArgs(args);
+  let options: ReturnType<typeof parseAnalyzeArgs>;
+  try {
+    options = parseAnalyzeArgs(args);
+  } catch (error) {
+    if (error instanceof UsageError) {
+      console.error(`Error: ${error.message}`);
+      console.error('Run "chaperone analyze --help" for usage information.');
+      return EXIT.ERROR;
+    }
+    throw error;
+  }
 
   if (options.help) {
     console.log(ANALYZE_HELP_TEXT);
@@ -223,57 +234,16 @@ export async function runAnalyze(args: string[]): Promise<number> {
   }
 }
 
-interface AnalyzeArgs {
-  config?: string;
-  cwd?: string;
-  dryRun?: boolean;
-  force?: boolean;
-  verbose?: boolean;
-  apiKey?: string;
-  help?: boolean;
-}
-
-function parseAnalyzeArgs(args: string[]): AnalyzeArgs {
-  const result: AnalyzeArgs = {};
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    switch (arg) {
-      case "--help":
-      case "-h":
-        result.help = true;
-        break;
-
-      case "--config":
-      case "-c":
-        result.config = args[++i];
-        break;
-
-      case "--cwd":
-        result.cwd = args[++i];
-        break;
-
-      case "--dry-run":
-        result.dryRun = true;
-        break;
-
-      case "--force":
-        result.force = true;
-        break;
-
-      case "--verbose":
-      case "-v":
-        result.verbose = true;
-        break;
-
-      case "--api-key":
-        result.apiKey = args[++i];
-        break;
-    }
-  }
-
-  return result;
+function parseAnalyzeArgs(args: string[]) {
+  return parseArgs(args, {
+    help: { names: ["--help", "-h"], type: "boolean" },
+    config: { names: ["--config", "-c"], type: "string" },
+    cwd: { names: ["--cwd"], type: "string" },
+    dryRun: { names: ["--dry-run"], type: "boolean" },
+    force: { names: ["--force"], type: "boolean" },
+    verbose: { names: ["--verbose", "-v"], type: "boolean" },
+    apiKey: { names: ["--api-key"], type: "string" },
+  });
 }
 
 const ANALYZE_HELP_TEXT = `

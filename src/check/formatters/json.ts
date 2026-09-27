@@ -1,4 +1,9 @@
-import type { CheckSummary } from "../types";
+import type { CheckSummary, ConfigDiagnostic } from "../types";
+
+export interface JsonFormatOptions {
+  /** Include only errors in results/bySource (summary counts are unchanged) */
+  quiet?: boolean;
+}
 
 /**
  * JSON output format
@@ -35,12 +40,17 @@ export interface JsonOutput {
       context?: Record<string, unknown>;
     }>
   >;
+  /** Configuration warnings */
+  diagnostics: ConfigDiagnostic[];
 }
 
 /**
  * Format check results as JSON
  */
-export function formatJson(summary: CheckSummary, noWarnings = false): string {
+export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {}): string {
+  const listed = options.quiet
+    ? summary.results.filter((result) => result.severity === "error")
+    : summary.results;
   const output: JsonOutput = {
     success: summary.success,
     summary: {
@@ -49,7 +59,7 @@ export function formatJson(summary: CheckSummary, noWarnings = false): string {
       totalWarnings: summary.totalWarnings,
       duration: summary.duration,
     },
-    results: summary.results.map((r) => ({
+    results: listed.map((r) => ({
       file: r.file,
       rule: r.rule,
       message: r.message,
@@ -62,10 +72,11 @@ export function formatJson(summary: CheckSummary, noWarnings = false): string {
       context: r.context,
     })),
     bySource: {},
+    diagnostics: summary.diagnostics ?? [],
   };
 
   // Group by source
-  for (const result of summary.results) {
+  for (const result of listed) {
     const source = result.source ?? "unknown";
     if (!output.bySource[source]) {
       output.bySource[source] = [];
