@@ -133,7 +133,7 @@ chaperone version
 |--------|-------------|
 | `--config, -c <path>` | Config file path (default: `.chaperone.json`) |
 | `--cwd <path>` | Working directory (default: current directory) |
-| `--fix` | Let ESLint and Prettier fix what they can (custom rules run after the fixers) |
+| `--fix` | Let ESLint and Prettier fix what they can. The tools then run one at a time (ESLint, Prettier, TypeScript) and the custom rules run after them. |
 | `--format, -f <type>` | `text` (default), `json` or `ai` |
 | `--quiet, -q` | List only errors, in every format (counts still include warnings) |
 | `--no-warnings` | Drop warnings entirely |
@@ -519,7 +519,7 @@ Modules must be imported through their barrel file, not via deep imports.
 }
 ```
 
-- `modules` (glob for module directories) and `files` are required.
+- `modules` (glob for module directories, `**` allowed: `src/**/features/*`) and `files` are required. A `modules` glob that matches no directory is reported as checking nothing.
 - `import { login } from "../features/auth"` and `from "@/features/auth"` resolve to the barrel and pass; `from "@/features/auth/model/login"` is a deep import. The barrel may use any extension (`index.ts`, `index.tsx`, `index.js`).
 - `barrelFile` (default `index.ts`), `allowSameModule` (default `true`: deep imports inside the same module are fine).
 
@@ -575,10 +575,10 @@ Presets are shareable rule bundles used through `extends`:
 
 ## Tool runners
 
-When configured, `check` also runs TypeScript (`tsc --noEmit`), ESLint (`eslint --format json .`) and Prettier (`prettier --check .`), concurrently with each other and with the custom rules.
+When configured, `check` also runs TypeScript (`tsc --noEmit`), ESLint (`eslint --format json .`) and Prettier (`prettier --check .`), concurrently with each other and with the custom rules. `command` rules start after the tools have finished (a command may write files), and with `--fix` the tools run one after another.
 
 - A runner runs when its config exists in the project root (`tsconfig.json`; `eslint.config.{js,mjs,cjs,ts,mts,cts}`, `.eslintrc*` or `eslintConfig` in `package.json`; `.prettierrc*`, `prettier.config.*` or `prettier` in `package.json`) and its binary is found in `node_modules/.bin` (of the project or any parent directory) or on the `PATH`. Set `rules.<tool>.enabled: false` to skip one.
-- Runners **fail closed**: a tool that exits with an error but reports nothing parseable (a crashed ESLint config, `tsc` error TS18003 "No inputs were found", a Prettier syntax error) is an error in the report, with the tool's output, never a pass.
+- Runners **fail closed**: a tool that exits with an error but reports nothing parseable (a crashed ESLint config, `tsc` error TS18003 "No inputs were found", a Prettier syntax error) is an error in the report, with the tool's output, never a pass. ESLint failing on warnings alone (`--max-warnings`) fails the check too.
 - A skipped runner is always listed with the reason (`skipped: no ESLint config in the project root`), and a passing report says what was skipped.
 - A "solution-style" `tsconfig.json` (`"files": []` plus `references`, as in the Vite templates) would make `tsc --noEmit` check nothing, so TypeScript is reported as skipped until you point it at a project: `"rules": { "typescript": { "args": ["-p", "tsconfig.app.json"] } }`.
 
