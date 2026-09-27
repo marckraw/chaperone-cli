@@ -132,6 +132,19 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
     tokens.push({ type, value, start, end });
   };
 
+  /** Whether a token ends an operand (a value), after which `/` divides and `<` compares */
+  const endsOperand = (token: Token | undefined): boolean => {
+    if (!token) return false;
+    switch (token.type) {
+      case "name":
+        return !EXPRESSION_KEYWORDS.has(token.value);
+      case "punct":
+        return token.value === ")" || token.value === "]" || token.value === "}";
+      default:
+        return true;
+    }
+  };
+
   /** Whether the next token may start an expression (so `/` is a regex and `<` may be JSX) */
   const expressionAllowed = (): boolean => {
     const previous = tokens[tokens.length - 1];
@@ -140,6 +153,10 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
       case "name":
         return EXPRESSION_KEYWORDS.has(previous.value);
       case "punct":
+        if (previous.value === "!") {
+          // TypeScript non-null assertion `value! / 2` versus logical not `!/re/.test(s)`
+          return !endsOperand(tokens[tokens.length - 2]);
+        }
         return !(
           previous.value === ")" ||
           previous.value === "]" ||
@@ -280,6 +297,26 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
     return tokens[index]?.type === "name" && tokens[index - 1]?.type === "name" && tokens[index - 1]!.value === "type";
   };
 
+  /**
+   * After the `>` of `<Name>`: a parenthesised parameter list followed by `=>` or `:`
+   * makes it a generic signature (`<TItem>(item: TItem) => void`), not a JSX element.
+   */
+  const isGenericSignature = (afterAngle: number): boolean => {
+    let index = afterAngle;
+    while (index < length && isWhitespace(code.charCodeAt(index))) index++;
+    if (code[index] !== "(") return false;
+    let depth = 0;
+    for (; index < length; index++) {
+      const character = code[index];
+      if (character === "(") depth++;
+      else if (character === ")" && --depth === 0) break;
+      else if (character === "\n" && depth === 0) return false;
+    }
+    index++;
+    while (index < length && isWhitespace(code.charCodeAt(index))) index++;
+    return code.startsWith("=>", index) || code[index] === ":";
+  };
+
   /** At `<` in expression position: an element or fragment, or a generic `<T,>` / `<T extends X>` */
   const looksLikeJsx = (): boolean => {
     const next = code.charCodeAt(pos + 1);
@@ -294,12 +331,10 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
     const after = code[index];
 
     if (after === ",") return false; // <T,>(x) => ...
+    if (after === "=" && code[index + 1] !== ">") return false; // <T = Default>(x) => ...
     if (code.startsWith("extends", index) && !/[\w$=]/.test(code[index + 7] ?? "")) return false;
-    if (after === ">" && name.length === 1 && /[A-Z]/.test(name)) {
-      // <T>(x: T) => ... in a type position
-      let probe = index + 1;
-      while (probe < length && isWhitespace(code.charCodeAt(probe))) probe++;
-      if (code[probe] === "(") return false;
+    if (after === ">" && /^[A-Z]/.test(name) && isGenericSignature(index + 1)) {
+      return false; // <TItem>(item: TItem) => void in a type position
     }
     return true;
   };
@@ -488,7 +523,15 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
       }
 
       const two = code.slice(pos, pos + 2);
-      if (two === "=>" || two === "++" || two === "--" || (two === "?." && !isDigit(code.charCodeAt(pos + 2)))) {
+      if (
+        two === "=>" ||
+        two === "++" ||
+        two === "--" ||
+        two === "||" ||
+        two === "&&" ||
+        two === "??" ||
+        (two === "?." && !isDigit(code.charCodeAt(pos + 2)))
+      ) {
         pos += 2;
         push("punct", two, start, pos);
         continue;

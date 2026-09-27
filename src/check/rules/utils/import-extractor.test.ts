@@ -191,3 +191,24 @@ describe("extractImports: TypeScript import types", () => {
     ]);
   });
 });
+
+describe("extractImports: statement boundaries", () => {
+  test("a type-only export list without semicolons does not swallow the next statement", () => {
+    const code = "export type { A } from './a'\nexport type { B }\nexport { invoke } from '@tauri-apps/api/core'\n";
+    const entries = extractImports(code, { filePath: "file.ts" });
+    expect(entries.map((entry) => [entry.source, entry.isTypeImport, entry.line])).toEqual([
+      ["./a", true, 1],
+      ["@tauri-apps/api/core", false, 3],
+    ]);
+  });
+
+  test("runtime import() after || and && is not type-only", () => {
+    const code = "const a = cached || import('./a');\nconst b = ready && import('./b');\n";
+    expect(extractImports(code, { filePath: "file.ts" }).map((entry) => entry.isTypeImport)).toEqual([false, false]);
+  });
+
+  test("MDX import blocks may span several lines", () => {
+    const mdx = "import {\n  Chart,\n  Table,\n} from './components'\n\n# Title\n\nDon't import this: import x from 'y'\n";
+    expect(extractImports(mdx, { filePath: "docs/page.mdx" }).map((entry) => entry.source)).toEqual(["./components"]);
+  });
+});

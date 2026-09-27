@@ -66,3 +66,30 @@ describe("analyzeBrackets", () => {
     expect(depth[tokens.findIndex((token) => token.value === "c")]).toBe(2);
   });
 });
+
+describe("tokenize: TypeScript operators", () => {
+  test("a non-null assertion before / is division, not a regex", () => {
+    const tokens = tokenize("const pct = Math.round((done! / total) * 100); // %\nexport const after = 1;", { jsx: false });
+    expect(tokens.some((token) => token.type === "regex")).toBe(false);
+    expect(tokens.map((token) => token.value)).toContain("after");
+    expect(tokenize("if (!/x/.test(s)) {}").some((token) => token.type === "regex")).toBe(true);
+  });
+
+  test("||, && and ?? are single tokens", () => {
+    expect(summary(tokenize("a || b && c ?? d")).filter((entry) => entry.startsWith("punct"))).toEqual([
+      "punct:||",
+      "punct:&&",
+      "punct:??",
+    ]);
+  });
+
+  test("multi-letter generic signatures in .tsx are not JSX", () => {
+    const tokens = tokenize(
+      "type P = { render: <TItem>(item: TItem) => void; map: <TKey = string>(k: TKey) => TKey };\nconst later = 1;"
+    );
+    expect(tokens.some((token) => token.type === "jsx")).toBe(false);
+    expect(tokens.map((token) => token.value)).toContain("later");
+    // A real element followed by parenthesised text is still JSX
+    expect(tokenize("const el = <Label>(optional)</Label>;").some((token) => token.type === "jsx")).toBe(true);
+  });
+});

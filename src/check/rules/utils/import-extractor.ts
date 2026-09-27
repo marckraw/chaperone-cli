@@ -102,6 +102,11 @@ function scanClause(tokens: Token[], start: number): ClauseScan {
       if (isPunct(token, "}")) {
         if (current.length > 0) specifiers.push(current);
         current = null;
+        // After `{ ... }` only `from "x"` may follow; anything else is the next statement
+        const source = isName(tokens[index + 1], "from") ? staticString(tokens[index + 2]) : null;
+        return source !== null
+          ? { end: index + 3, source, specifiers, hasValueBinding }
+          : { end: index + 1, source: null, specifiers, hasValueBinding };
       } else if (isPunct(token, ",")) {
         if (current.length > 0) specifiers.push(current);
         current = [];
@@ -150,9 +155,15 @@ function scriptRegions(content: string, filePath: string): string {
   const blank = (text: string) => text.replace(/[^\n]/g, " ");
 
   if (/\.mdx$/i.test(filePath)) {
+    // ESM blocks start with import/export at the start of a line and run to the next blank line
+    let inEsm = false;
     return content
       .split("\n")
-      .map((line) => (/^\s*(?:import|export)\b/.test(line) ? line : blank(line)))
+      .map((line) => {
+        if (/^(?:import|export)\b/.test(line)) inEsm = true;
+        else if (line.trim() === "") inEsm = false;
+        return inEsm ? line : blank(line);
+      })
       .join("\n");
   }
 
