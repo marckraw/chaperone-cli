@@ -54,7 +54,8 @@ export const reactNativeExpoPreset: ChaperonePreset = {
     ],
   },
   include: ["src/**/*", "app/**/*"],
-  exclude: ["node_modules", "dist", "build", ".expo", "android", "ios"],
+  // node_modules, .git, /dist and /build are excluded by default; native projects live at the root
+  exclude: [".expo", "/android", "/ios"],
   integrations: {
     respectEslintIgnore: true,
     useTypescriptPaths: true,

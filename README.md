@@ -499,7 +499,7 @@ Enforce architectural layers.
 
 - Each layer needs `files` and `allowImportsFrom` (names of other layers; unknown names are errors). Imports within a layer are always allowed.
 - Every import that resolves to a project file is checked: relative paths, directory imports (`../features/auth` → `index.ts`), `.js` specifiers for `.ts`/`.tsx` sources, and **tsconfig `paths`/`baseUrl` aliases** such as `@/features/auth` (from the nearest `tsconfig.json`/`jsconfig.json` above the importing file, following `extends` and project `references`). Packages are ignored. Set `integrations.useTypescriptPaths: false` to stop resolving aliases.
-- When a file matches several layers, the layer listed **last** wins. Layers with no files, and layers whose files all belong to a later layer, are reported as notices.
+- When a file matches several layers, the layer listed **last** wins. Layers with no files, layers whose files all belong to a later layer, and alias-like imports (`@/…`, `~/…`, `#…`) that no tsconfig `paths` entry resolves are reported as notices.
 - `includeTypeImports` (default `true`) and `includeDynamicImports` (default `true`).
 
 ### `public-api`
@@ -569,7 +569,7 @@ Presets are shareable rule bundles used through `extends`:
 | `chaperone/package-essentials` | `package.json` has `dev`, `build`, `test` and `lint` scripts. |
 | `chaperone/layered-architecture` | Feature-Sliced layers (`shared` → `entities` → `features` → `widgets` → `app`) under `src/`, public APIs for `src/features/*` and `src/entities/*`, and no files in `src/components`, `src/hooks` or `src/lib`. |
 | `chaperone/react-layered` | The same layers plus presentational purity, pure-file purity, `.pure.test.ts` pairing (warning) and feature public APIs. |
-| `chaperone/react-native-expo` | Files containing JSX use `.tsx`, no `console.log` (warning) and no inline style objects (warning) under `src/`; includes `src/**` and `app/**`, excludes `.expo`, `android` and `ios`. |
+| `chaperone/react-native-expo` | Files containing JSX use `.tsx`, no `console.log` (warning) and no inline style objects (warning) under `src/`; includes `src/**` and `app/**`, excludes `.expo` and the root `android` and `ios` projects. |
 | `chaperone/react-server-components` | Files starting with `"use client"` export only components (`PascalCase`) and hooks (`useX`). |
 
 ## Tool runners
@@ -579,6 +579,7 @@ When configured, `check` also runs TypeScript (`tsc --noEmit`), ESLint (`eslint 
 - A runner runs when its config exists in the project root (`tsconfig.json`; `eslint.config.{js,mjs,cjs,ts,mts,cts}`, `.eslintrc*` or `eslintConfig` in `package.json`; `.prettierrc*`, `prettier.config.*` or `prettier` in `package.json`) and its binary is found in `node_modules/.bin` (of the project or any parent directory) or on the `PATH`. Set `rules.<tool>.enabled: false` to skip one.
 - Runners **fail closed**: a tool that exits with an error but reports nothing parseable (a crashed ESLint config, `tsc` error TS18003 "No inputs were found", a Prettier syntax error) is an error in the report, with the tool's output, never a pass.
 - A skipped runner is always listed with the reason (`skipped: no ESLint config in the project root`), and a passing report says what was skipped.
+- A "solution-style" `tsconfig.json` (`"files": []` plus `references`, as in the Vite templates) would make `tsc --noEmit` check nothing, so TypeScript is reported as skipped until you point it at a project: `"rules": { "typescript": { "args": ["-p", "tsconfig.app.json"] } }`.
 
 ## Reports
 
