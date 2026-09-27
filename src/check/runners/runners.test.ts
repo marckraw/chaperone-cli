@@ -192,3 +192,17 @@ describe("typescript runner: solution-style configs", () => {
     expect(checksNothing('{ "include": ["src"] }')).toBe(false);
   });
 });
+
+describe("eslint runner: exit code 1 with only warnings", () => {
+  test("fails the check (e.g. --max-warnings 0)", () => {
+    const warningsOnly = JSON.stringify([
+      { filePath: "/project/src/a.js", messages: [{ ruleId: "no-console", severity: 1, message: "x", line: 1, column: 1 }] },
+    ]);
+    const run = interpretESLintRun(exec({ stdout: warningsOnly, exitCode: 1 }), "/project", "eslint --max-warnings 0");
+    expect(run.results.map((result) => [result.rule, result.severity])).toEqual([
+      ["eslint/no-console", "warning"],
+      ["eslint/max-warnings", "error"],
+    ]);
+    expect(run.success).toBe(false);
+  });
+});

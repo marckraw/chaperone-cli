@@ -221,3 +221,36 @@ describe("unresolved aliases", () => {
     expect(result.notices?.[0]).toContain('1 alias-like import specifier(s) did not resolve to project files (e.g. "@/features/x")');
   });
 });
+
+describe("public-api module discovery", () => {
+  test("modules globs with ** keep modules apart", async () => {
+    const cwd = makeProject({
+      "src/app/area/features/auth/index.ts": "export {};\n",
+      "src/app/area/features/auth/login.ts": 'import { x } from "../billing/internal";\n',
+      "src/app/area/features/billing/index.ts": "export {};\n",
+      "src/app/area/features/billing/internal.ts": "export const x = 1;\n",
+    });
+    const result = await runPublicApiRule(
+      { ...PUBLIC_API, modules: "src/**/features/*" },
+      { cwd, ...OPTIONS }
+    );
+    expect(result.results.map((entry) => entry.file)).toEqual(["src/app/area/features/auth/login.ts"]);
+  });
+
+  test("a modules glob that matches no directories checks nothing and says so", async () => {
+    const cwd = makeProject({ "src/app/a.ts": "" });
+    const result = await runPublicApiRule(PUBLIC_API, { cwd, ...OPTIONS });
+    expect(result.filesChecked).toBe(0);
+    expect(result.notices).toEqual(['"modules" (src/features/*) matched no module directories']);
+  });
+});
+
+describe("summarizeRules", () => {
+  test("uses the rule's own explanation when it checked nothing", async () => {
+    const { summarizeRules } = await import("./index");
+    const summary = summarizeRules([PUBLIC_API], {
+      barrels: { ruleId: "barrels", results: [], filesChecked: 0, notices: ['"modules" (src/features/*) matched no module directories'] },
+    });
+    expect(summary[0]).toMatchObject({ status: "no-files", notices: ['"modules" (src/features/*) matched no module directories'] });
+  });
+});

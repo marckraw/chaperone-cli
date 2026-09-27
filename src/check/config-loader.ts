@@ -69,6 +69,8 @@ interface LoadState {
   sources: ConfigSource[];
   /** Rule ids defined by sources loaded so far (used for override hints) */
   knownIds: Set<string>;
+  /** Presets already loaded (built-in names and absolute paths): each is applied once */
+  loadedPresets: Set<string>;
 }
 
 function displayPath(cwd: string, absolutePath: string): string {
@@ -202,6 +204,10 @@ function resolveExtends(
       fail(`circular preset dependency: ${[...ancestry, specifier].join(" → ")}`);
       return;
     }
+    // A preset reached through several `extends` paths is applied once, at its first
+    // position, so a later copy cannot undo overrides made in between.
+    if (state.loadedPresets.has(specifier)) return;
+    state.loadedPresets.add(specifier);
     addSource(preset, specifier, null, [...ancestry, specifier], state);
     return;
   }
@@ -234,6 +240,8 @@ function resolveExtends(
     fail(`preset file not found: ${label}`);
     return;
   }
+  if (state.loadedPresets.has(absolutePath)) return;
+  state.loadedPresets.add(absolutePath);
 
   const raw = parseJsonFile(absolutePath, label, state);
   if (raw === undefined) return;
@@ -320,7 +328,7 @@ function mergeSources(sources: ConfigSource[]): {
  */
 export function loadConfigWithDiagnostics(cwd: string, configPath?: string): LoadedConfig {
   const resolvedPath = configPath ? resolve(cwd, configPath) : join(cwd, CONFIG_FILENAME);
-  const state: LoadState = { cwd, diagnostics: [], sources: [], knownIds: new Set() };
+  const state: LoadState = { cwd, diagnostics: [], sources: [], knownIds: new Set(), loadedPresets: new Set() };
 
   if (!existsSync(resolvedPath)) {
     if (configPath) {

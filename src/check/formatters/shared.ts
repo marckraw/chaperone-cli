@@ -103,6 +103,14 @@ export function describeGaps(summary: CheckSummary): string[] {
         .join(", ")})`
     );
   }
+  const partialRules = (summary.rules ?? []).filter((rule) => rule.status !== "no-files" && rule.notices.length > 0);
+  if (partialRules.length > 0) {
+    gaps.push(
+      `${partialRules.length} rule${partialRules.length === 1 ? "" : "s"} only partly checked (${partialRules
+        .map((rule) => rule.id)
+        .join(", ")}; see the notices)`
+    );
+  }
   return gaps;
 }
 

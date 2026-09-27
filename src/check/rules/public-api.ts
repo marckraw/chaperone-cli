@@ -1,5 +1,6 @@
 import { basename, posix } from "node:path";
 import type { FileIndex } from "../../utils/file-index";
+import { compileGlob, normalizeGlob } from "../../utils/glob";
 import type { CheckResult, PublicApiRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { createUnresolvedAliasTracker, getRuleContext } from "./utils/rule-context";
@@ -13,13 +14,20 @@ function discoverModuleRoots(
   index: FileIndex,
   ignore: readonly string[]
 ): string[] {
-  const parts = modulesPattern.replace(/\/+$/, "").split("/");
-  const files = index.glob(`${parts.join("/")}/**`, ignore);
+  const pattern = normalizeGlob(modulesPattern).replace(/\/+$/, "");
+  const isModuleRoot = compileGlob(pattern);
   const roots = new Set<string>();
-  for (const file of files) {
-    const fileParts = file.split("/");
-    if (fileParts.length > parts.length) {
-      roots.add(fileParts.slice(0, parts.length).join("/"));
+  // The module root of a file is its shortest parent directory that matches `modules`
+  // (this also works for patterns with `**`, such as "src/**/features/*").
+  for (const file of index.glob(`${pattern}/**`, ignore)) {
+    const segments = file.split("/");
+    let directory = "";
+    for (let position = 0; position < segments.length - 1; position++) {
+      directory = position === 0 ? segments[0]! : `${directory}/${segments[position]}`;
+      if (isModuleRoot(directory)) {
+        roots.add(directory);
+        break;
+      }
     }
   }
   return Array.from(roots).sort();
@@ -57,7 +65,11 @@ export async function runPublicApiRule(
     notices.push(`"modules" (${rule.modules}) matched no module directories`);
   }
 
-  const moduleOf = (path: string) => moduleRoots.find((root) => path.startsWith(`${root}/`));
+  // The most specific module containing a path
+  const moduleOf = (path: string) =>
+    moduleRoots
+      .filter((root) => path.startsWith(`${root}/`))
+      .reduce<string | undefined>((best, root) => (!best || root.length > best.length ? root : best), undefined);
 
   // Get all files to check
   const files = index.glob(rule.files, rule.exclude ?? []);
@@ -108,7 +120,8 @@ export async function runPublicApiRule(
   return {
     ruleId: rule.id,
     results,
-    filesChecked: files.length,
+    // Without module directories nothing can be checked, whatever `files` matches
+    filesChecked: moduleRoots.length === 0 ? 0 : files.length,
     notices,
   };
 }

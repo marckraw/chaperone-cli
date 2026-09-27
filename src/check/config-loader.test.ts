@@ -187,3 +187,20 @@ describe("loadConfigWithDiagnostics", () => {
     expect(warning!.message).toContain('did you mean "exclude"');
   });
 });
+
+describe("loadConfigWithDiagnostics: shared presets", () => {
+  test("a preset reached through two extends paths is applied once, keeping overrides", () => {
+    const shared = { rules: { custom: [{ ...VALID_RULES.regex, id: "shared-rule", severity: "warning" }] } };
+    const cwd = makeProject({
+      ".chaperone.json": JSON.stringify({ extends: ["./b.json", "./c.json"] }),
+      "b.json": JSON.stringify({
+        extends: ["./d.json"],
+        rules: { custom: [{ ...VALID_RULES.regex, id: "shared-rule", severity: "error" }] },
+      }),
+      "c.json": JSON.stringify({ extends: ["./d.json"] }),
+      "d.json": JSON.stringify(shared),
+    });
+    const rule = loadConfigWithDiagnostics(cwd).config.rules?.custom?.find((entry) => entry.id === "shared-rule");
+    expect(rule?.severity).toBe("error");
+  });
+});

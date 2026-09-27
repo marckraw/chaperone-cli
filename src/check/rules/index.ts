@@ -211,7 +211,8 @@ export function summarizeRules(rules: CustomRule[], byRule: Record<string, RuleR
     const warnings = result?.results.filter((entry) => entry.severity === "warning").length ?? 0;
     const notices = [...(result?.notices ?? [])];
     const noFiles = result?.filesChecked === 0;
-    if (noFiles) {
+    // Rules that explain their own empty scope (e.g. public-api without modules) keep their notice
+    if (noFiles && notices.length === 0) {
       notices.unshift(
         rule.type === "import-boundary"
           ? "none of its layer globs matched any file, so it checked nothing"

@@ -117,6 +117,17 @@ export function interpretESLintRun(execResult: ExecResult, cwd: string, command:
   if (execResult.exitCode !== 0 && results.length === 0) {
     return failure(`ESLint exited with code ${execResult.exitCode} without reporting any problems`);
   }
+  if (execResult.exitCode !== 0 && !results.some((result) => result.severity === "error")) {
+    // e.g. --max-warnings exceeded: ESLint failed the run, so the check must fail too
+    results.push({
+      file: "",
+      rule: "eslint/max-warnings",
+      message: `ESLint exited with code ${execResult.exitCode} although it reported only warnings (for example --max-warnings was exceeded)`,
+      severity: "error",
+      source: "eslint",
+      context: { command, exitCode: execResult.exitCode },
+    });
+  }
 
   return {
     source: "eslint",

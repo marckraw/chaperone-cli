@@ -131,3 +131,29 @@ describe("formatText", () => {
     expect(formatText(summary({ results: [result()] }), { color: true })).toContain("\x1b[");
   });
 });
+
+describe("partly checked rules", () => {
+  test("rules with scope notices qualify PASSED", () => {
+    const json = JSON.parse(
+      formatJson(
+        summary({
+          runners: [],
+          disabledRules: [],
+          rules: [
+            {
+              id: "layers",
+              type: "import-boundary",
+              status: "passed",
+              filesChecked: 10,
+              errors: 0,
+              warnings: 0,
+              notices: ["layers with no matching files: widgets (src/widgets/**)"],
+            },
+          ],
+        })
+      )
+    );
+    expect(json.status).toBe("passed-with-gaps");
+    expect(json.gaps).toEqual(["1 rule only partly checked (layers; see the notices)"]);
+  });
+});
