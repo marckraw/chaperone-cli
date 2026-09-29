@@ -384,6 +384,29 @@ export interface DuplicateCodeRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
+ * Comment integrity rule - block comments a merge broke (a lost opener or closer)
+ */
+export interface CommentIntegrityRule extends BaseRule, AIGeneratedMetadata {
+  type: "comment-integrity";
+  files: string; // Glob for JavaScript / TypeScript files to scan
+  message?: string;
+}
+
+/**
+ * Unique capture rule - no two files may capture the same key from their paths
+ */
+export interface UniqueCaptureRule extends BaseRule, AIGeneratedMetadata {
+  type: "unique-capture";
+  files: string; // Glob for the files whose keys must be unique
+  capture: {
+    pattern: string; // Regex applied to the path (or basename)
+    group?: number; // Capture group holding the key (default 1)
+    source?: "path" | "basename"; // What the pattern is applied to (default "path")
+  };
+  message?: string;
+}
+
+/**
  * Union of all custom rule types
  */
 export type CustomRule =
@@ -400,6 +423,8 @@ export type CustomRule =
   | ImportBoundaryRule
   | PublicApiRule
   | DirectiveExportPatternRule
+  | CommentIntegrityRule
+  | UniqueCaptureRule
   | RepeatedLiteralRule
   | DuplicateCodeRule;
 

@@ -250,7 +250,7 @@ Custom rules live in `rules.custom`. Every rule has these common fields:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | `string` | Yes | One of the 15 types below. |
+| `type` | `string` | Yes | One of the 17 types below. |
 | `id` | `string` | Yes | Unique identifier. A rule with the same id as a preset rule replaces it. |
 | `severity` | `"error" \| "warning"` | Yes | Errors make `check` exit with 1; warnings are only reported. |
 | `exclude` | `string[]` | No | Extra exclude patterns for this rule (same semantics as the global `exclude`). |
@@ -540,6 +540,39 @@ In files that start with a directive (such as `"use client"`), every runtime nam
 ```
 
 Type-only exports and default exports are not checked; `export { a as b }`, `export * as ns from` and enums are.
+
+### `comment-integrity`
+
+Find block comments a merge broke in JavaScript and TypeScript files: a doc comment that lost its `/**` (its remaining lines now sit in code), one that lost its `*/` (the next comment opens inside it, and whatever lay between them disappears into one comment with no error), and a comment that never closes.
+
+```json
+{
+  "type": "comment-integrity",
+  "id": "merge-broken-comments",
+  "severity": "error",
+  "files": "src/**/*.{ts,tsx}"
+}
+```
+
+Each problem is reported at its line, once per broken comment. Strings, template literals, regular expressions and JSX text can hold `/*` or lines starting with `*` without being reported. A `message` is prefixed to the problem's own description.
+
+### `unique-capture`
+
+No two files may capture the same key from their paths: numbered files that two branches add at once, such as migrations or ADRs.
+
+```json
+{
+  "type": "unique-capture",
+  "id": "migration-numbers",
+  "severity": "error",
+  "files": "drizzle/*.sql",
+  "capture": { "pattern": "^(\\d{4})_", "source": "basename" },
+  "message": "Two migrations share a number: generate yours again after master's"
+}
+```
+
+- `capture.pattern` (regex) is applied to the path, or to the file name with `"source": "basename"`; `capture.group` (default `1`) holds the key. Files it doesn't match are ignored.
+- Every file that shares a key is reported, naming the others.
 
 ### `repeated-literal`
 

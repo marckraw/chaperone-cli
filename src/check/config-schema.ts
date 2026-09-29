@@ -28,6 +28,8 @@ export const RULE_TYPES = [
   "import-boundary",
   "public-api",
   "directive-export-pattern",
+  "comment-integrity",
+  "unique-capture",
   "repeated-literal",
   "duplicate-code",
 ] as const;
@@ -240,6 +242,21 @@ export const RULE_SCHEMAS = {
     files: nonEmpty,
     directive: nonEmpty,
     allowedExportNamePatterns: stringList.min(1, "must contain at least one pattern"),
+  }),
+  "comment-integrity": z.object({
+    ...baseRuleShape,
+    type: z.literal("comment-integrity"),
+    files: nonEmpty.describe("Glob for JavaScript and TypeScript files to scan"),
+  }),
+  "unique-capture": z.object({
+    ...baseRuleShape,
+    type: z.literal("unique-capture"),
+    files: nonEmpty.describe("Glob for the files whose keys must be unique"),
+    capture: z.object({
+      pattern: nonEmpty.describe("Regex applied to the path (or basename) that captures the key"),
+      group: z.number().int().min(0).optional().describe("Capture group holding the key (default 1)"),
+      source: z.enum(["path", "basename"]).optional().describe('What the pattern is applied to (default "path")'),
+    }),
   }),
   "repeated-literal": z.object({
     ...baseRuleShape,
@@ -640,6 +657,13 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
     case "directive-export-pattern":
       glob(["files"]);
       regexList("allowedExportNamePatterns");
+      break;
+    case "comment-integrity":
+      glob(["files"]);
+      break;
+    case "unique-capture":
+      glob(["files"]);
+      regex(["capture", "pattern"]);
       break;
     case "repeated-literal": {
       glob(["files"]);

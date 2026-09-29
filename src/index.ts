@@ -59,6 +59,8 @@ export type {
   ImportBoundaryRule,
   PublicApiRule,
   DirectiveExportPatternRule,
+  CommentIntegrityRule,
+  UniqueCaptureRule,
   RepeatedLiteralRule,
   DuplicateCodeRule,
   AIGeneratedMetadata,

@@ -20,6 +20,8 @@ import {
   runDirectiveExportPatternRule,
   isDirectiveExportPatternRule,
 } from "./directive-export-pattern";
+import { runCommentIntegrityRule, isCommentIntegrityRule } from "./comment-integrity";
+import { runUniqueCaptureRule, isUniqueCaptureRule } from "./unique-capture";
 import { runRepeatedLiteralRule, isRepeatedLiteralRule } from "./repeated-literal";
 import { runDuplicateCodeRule, isDuplicateCodeRule } from "./duplicate-code";
 
@@ -43,6 +45,8 @@ export {
   runDirectiveExportPatternRule,
   isDirectiveExportPatternRule,
 } from "./directive-export-pattern";
+export { runCommentIntegrityRule, isCommentIntegrityRule, findCommentProblems } from "./comment-integrity";
+export { runUniqueCaptureRule, isUniqueCaptureRule, findDuplicateCaptures } from "./unique-capture";
 export { runRepeatedLiteralRule, isRepeatedLiteralRule } from "./repeated-literal";
 export { runDuplicateCodeRule, isDuplicateCodeRule } from "./duplicate-code";
 export { detectAIInstructionFiles } from "./ai-instructions";
@@ -116,6 +120,14 @@ async function dispatchRule(rule: CustomRule, options: RuleRunnerOptions, onDebu
   if (isDirectiveExportPatternRule(rule)) {
     debug(`checking exports in files with "${rule.directive}"`);
     return runDirectiveExportPatternRule(rule, options);
+  }
+  if (isCommentIntegrityRule(rule)) {
+    debug(`checking block comments in "${rule.files}"`);
+    return runCommentIntegrityRule(rule, options);
+  }
+  if (isUniqueCaptureRule(rule)) {
+    debug(`checking that /${rule.capture.pattern}/ captures a different key from each of "${rule.files}"`);
+    return runUniqueCaptureRule(rule, options);
   }
   if (isRepeatedLiteralRule(rule)) {
     debug(`allowing each literal at most ${rule.maxOccurrences ?? 2} times in "${rule.files}"`);

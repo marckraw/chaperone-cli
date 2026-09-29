@@ -98,6 +98,19 @@ export const VALID_RULES: Record<RuleType, Record<string, unknown>> = {
     directive: "use client",
     allowedExportNamePatterns: ["^[A-Z]"],
   },
+  "comment-integrity": {
+    type: "comment-integrity",
+    id: "comments",
+    severity: "error",
+    files: "src/**/*.{ts,tsx}",
+  },
+  "unique-capture": {
+    type: "unique-capture",
+    id: "migration-numbers",
+    severity: "error",
+    files: "drizzle/*.sql",
+    capture: { pattern: "^(\\d{4})_", source: "basename" },
+  },
   "repeated-literal": {
     type: "repeated-literal",
     id: "repeated-classes",
