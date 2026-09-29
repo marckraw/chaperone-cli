@@ -1,7 +1,25 @@
 import type { CheckResult, SymbolReferenceRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { type Comment, jsxEnabledFor, tokenize } from "../../utils/js-lexer";
 import { findExportedFunctions } from "./utils/exported-functions";
 import { getRuleContext } from "./utils/rule-context";
+
+/**
+ * A file's text with its comments blanked out (offsets kept): a name that appears only in a
+ * comment ("this test forgets to call countWords") is not a reference to it.
+ */
+export function withoutComments(content: string, filePath: string): string {
+  const comments: Comment[] = [];
+  tokenize(content, { jsx: jsxEnabledFor(filePath), comments });
+  if (comments.length === 0) return content;
+  let output = "";
+  let cursor = 0;
+  for (const comment of comments) {
+    output += content.slice(cursor, comment.start) + content.slice(comment.start, comment.end).replace(/[^\n]/g, " ");
+    cursor = comment.end;
+  }
+  return output + content.slice(cursor);
+}
 
 interface TargetReferenceScope {
   files: string[];
@@ -77,7 +95,7 @@ export async function runSymbolReferenceRule(
 
   const targetContentByFile = new Map<string, string>();
   for (const filePath of targetFiles) {
-    targetContentByFile.set(filePath, index.read(filePath) ?? "");
+    targetContentByFile.set(filePath, withoutComments(index.read(filePath) ?? "", filePath));
   }
 
   const kinds = rule.symbolKinds ?? ["function-declaration", "function-variable"];
