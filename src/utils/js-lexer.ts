@@ -11,14 +11,15 @@
  * Pure TypeScript with no native code, so it works inside `bun build --compile`.
  */
 
-export type TokenType = "name" | "punct" | "string" | "template" | "regex" | "number" | "jsx";
+export type TokenType = "name" | "punct" | "string" | "template" | "regex" | "number" | "jsx" | "jsx-text";
 
 export interface Token {
   type: TokenType;
   /**
    * name: the identifier; punct: the punctuator; string: the unquoted value;
    * template: the raw text when it has no substitutions ("" otherwise);
-   * regex/number: the source text; jsx: "" (a whole JSX element)
+   * regex/number: the source text; jsx: "" (a whole JSX element);
+   * jsx-text: JSX text, trimmed, its whitespace collapsed, "" for whitespace alone (only with `jsxContents`)
    */
   value: string;
   start: number;
@@ -30,6 +31,24 @@ export interface Token {
 export interface TokenizeOptions {
   /** Recognise JSX (default: true). Disable for .ts files, where `<T>x` is a type assertion. */
   jsx?: boolean;
+  /** When given, every comment the tokenizer skips is appended here, in source order. */
+  comments?: Comment[];
+  /**
+   * Emit what is inside JSX elements instead of one `jsx` token per element: tag and
+   * attribute names (`name`), `<`, `</`, `>`, `/>`, `=`, `{` and `}` (`punct`), attribute
+   * strings (`string`, raw), text (`jsx-text`) and the code inside `{...}`. Default: false.
+   */
+  jsxContents?: boolean;
+}
+
+/** A comment the tokenizer skipped: `// …` or `/* … *\/` */
+export interface Comment {
+  start: number;
+  /** Offset just past the comment (the end of the file for an unclosed block comment) */
+  end: number;
+  block: boolean;
+  /** Block comments only: false when no `*\/` closes it */
+  closed: boolean;
 }
 
 /** Keywords after which a `/` starts a regex and a `<` may start JSX */
@@ -117,10 +136,13 @@ function decodeEscapes(raw: string): string {
  */
 export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   const jsx = options.jsx ?? true;
+  const jsxContents = options.jsxContents ?? false;
   const tokens: Token[] = [];
   const length = code.length;
   let pos = 0;
   let nesting = 0;
+  /** With jsxContents: the index of the token that closed the last top-level JSX element */
+  let jsxEnd = -1;
 
   if (code.charCodeAt(0) === 0xfeff) pos = 1;
   if (code.startsWith("#!", pos)) {
@@ -149,6 +171,8 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
   const expressionAllowed = (): boolean => {
     const previous = tokens[tokens.length - 1];
     if (!previous) return true;
+    // A JSX element is an operand, like the single `jsx` token it otherwise is
+    if (tokens.length - 1 === jsxEnd) return false;
     switch (previous.type) {
       case "name":
         return EXPRESSION_KEYWORDS.has(previous.value);
@@ -180,12 +204,16 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
         const next = code.charCodeAt(pos + 1);
         if (next === 47) {
           const end = code.indexOf("\n", pos + 2);
-          pos = end === -1 ? length : end;
+          const stop = end === -1 ? length : end;
+          options.comments?.push({ start: pos, end: stop, block: false, closed: true });
+          pos = stop;
           continue;
         }
         if (next === 42) {
           const end = code.indexOf("*/", pos + 2);
-          pos = end === -1 ? length : end + 2;
+          const stop = end === -1 ? length : end + 2;
+          options.comments?.push({ start: pos, end: stop, block: true, closed: end !== -1 });
+          pos = stop;
           continue;
         }
       }
@@ -343,25 +371,61 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
     skipTrivia();
   };
 
+  /**
+   * With jsxContents: the JSX text between `from` and `to` as one token, trimmed, its
+   * whitespace collapsed; whitespace alone (a line break between two tags) has the value "".
+   */
+  const pushJsxText = (from: number, to: number): void => {
+    if (!jsxContents || from >= to) return;
+    let start = from;
+    let end = to;
+    while (start < end && isWhitespace(code.charCodeAt(start))) start++;
+    while (end > start && isWhitespace(code.charCodeAt(end - 1))) end--;
+    if (start < end) push("jsx-text", code.slice(start, end).replace(/\s+/g, " "), start, end);
+    else push("jsx-text", "", from, to);
+  };
+
+  /** A `{...}` in JSX: its code, plus (with jsxContents) the braces themselves */
+  const readJsxExpression = (): void => {
+    if (jsxContents) push("punct", "{", pos, pos + 1);
+    pos++;
+    if (lexCode(true) && jsxContents) push("punct", "}", pos - 1, pos);
+  };
+
   const readJsxChildren = (): void => {
+    let textStart = pos;
     while (pos < length) {
       const current = code.charCodeAt(pos);
       if (current === 123 /* { */) {
-        pos++;
-        lexCode(true);
+        pushJsxText(textStart, pos);
+        readJsxExpression();
+        textStart = pos;
         continue;
       }
       if (current === 60 /* < */) {
+        pushJsxText(textStart, pos);
         if (code.charCodeAt(pos + 1) === 47 /* / */) {
           const end = code.indexOf(">", pos);
+          if (jsxContents) {
+            push("punct", "</", pos, pos + 2);
+            const stop = end === -1 ? length : end;
+            const name = code.slice(pos + 2, stop).trim();
+            if (name) {
+              const nameStart = code.indexOf(name, pos + 2);
+              push("name", name, nameStart, nameStart + name.length);
+            }
+            if (end !== -1) push("punct", ">", end, end + 1);
+          }
           pos = end === -1 ? length : end + 1;
           return;
         }
         readJsxElement();
+        textStart = pos;
         continue;
       }
       pos++;
     }
+    pushJsxText(textStart, pos);
   };
 
   function readJsxElement(): void {
@@ -369,16 +433,20 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
       pos = length;
       return;
     }
+    if (jsxContents) push("punct", "<", pos, pos + 1);
     pos++; // <
     skipJsxTrivia();
     if (code[pos] === ">") {
+      if (jsxContents) push("punct", ">", pos, pos + 1);
       pos++;
       readJsxChildren();
       nesting--;
       return;
     }
 
+    const tagStart = pos;
     while (pos < length && /[\w$.:-]/.test(code[pos]!)) pos++;
+    if (jsxContents && pos > tagStart) push("name", code.slice(tagStart, pos), tagStart, pos);
     skipJsxTrivia();
 
     // Type arguments on an element: <Select<Option> value={...} />
@@ -397,24 +465,28 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
       skipJsxTrivia();
       const current = code[pos];
       if (current === "/" && code[pos + 1] === ">") {
+        if (jsxContents) push("punct", "/>", pos, pos + 2);
         pos += 2;
         nesting--;
         return;
       }
       if (current === ">") {
+        if (jsxContents) push("punct", ">", pos, pos + 1);
         pos++;
         readJsxChildren();
         nesting--;
         return;
       }
       if (current === "{") {
-        pos++;
-        lexCode(true);
+        readJsxExpression();
         continue;
       }
       if (current === '"' || current === "'") {
         const end = code.indexOf(current, pos + 1);
-        pos = end === -1 ? length : end + 1;
+        const stop = end === -1 ? length : end + 1;
+        // JSX attribute strings have no escapes: the value is the raw text
+        if (jsxContents) push("string", code.slice(pos + 1, end === -1 ? length : end), pos, stop);
+        pos = stop;
         continue;
       }
       if (current === "<") {
@@ -422,24 +494,26 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
         continue;
       }
       if (current === "=") {
+        if (jsxContents) push("punct", "=", pos, pos + 1);
         pos++;
         continue;
       }
       const nameStart = pos;
       while (pos < length && !/[\s=/>{}"'<]/.test(code[pos]!)) pos++;
       if (pos === nameStart) pos++;
+      else if (jsxContents) push("name", code.slice(nameStart, pos), nameStart, pos);
     }
     nesting--;
   }
 
   /**
    * Tokenize code. With `untilClosingBrace`, stop after the `}` that closes an
-   * enclosing `${` or JSX `{` (it is consumed, not emitted).
+   * enclosing `${` or JSX `{` (it is consumed, not emitted). Returns whether it did.
    */
-  function lexCode(untilClosingBrace: boolean): void {
+  function lexCode(untilClosingBrace: boolean): boolean {
     if (++nesting > MAX_NESTING) {
       pos = length;
-      return;
+      return false;
     }
     let braceDepth = 0;
 
@@ -495,7 +569,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
         pos++;
         if (untilClosingBrace && braceDepth === 0) {
           nesting--;
-          return;
+          return true;
         }
         braceDepth = Math.max(0, braceDepth - 1);
         push("punct", "}", start, pos);
@@ -511,7 +585,8 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
 
       if (current === 60 /* < */ && jsx && expressionAllowed() && looksLikeJsx()) {
         readJsxElement();
-        push("jsx", "", start, pos);
+        if (jsxContents) jsxEnd = tokens.length - 1;
+        else push("jsx", "", start, pos);
         continue;
       }
 
@@ -547,6 +622,7 @@ export function tokenize(code: string, options: TokenizeOptions = {}): Token[] {
     }
 
     nesting--;
+    return false;
   }
 
   lexCode(false);
