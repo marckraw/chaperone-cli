@@ -98,5 +98,14 @@ export const VALID_RULES: Record<RuleType, Record<string, unknown>> = {
     directive: "use client",
     allowedExportNamePatterns: ["^[A-Z]"],
   },
+  "repeated-literal": {
+    type: "repeated-literal",
+    id: "repeated-classes",
+    severity: "error",
+    files: "src/**/*.tsx",
+    minTokens: 4,
+    contextPattern: "\\bclassName\\s*=",
+    allow: [{ literal: "flex items-center gap-2 px-4", reason: "A layout, not a look" }],
+  },
 };
 

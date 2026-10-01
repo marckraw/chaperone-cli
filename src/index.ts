@@ -59,6 +59,7 @@ export type {
   ImportBoundaryRule,
   PublicApiRule,
   DirectiveExportPatternRule,
+  RepeatedLiteralRule,
   AIGeneratedMetadata,
   AIInstructionFile,
   ToolConfig,

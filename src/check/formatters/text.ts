@@ -55,6 +55,12 @@ function formatResult(result: CheckResult, colors: Palette): string {
     if (ctx.actualValue) {
       lines.push(`    ${colors.dim}Actual: ${colors.reset}${ctx.actualValue}`);
     }
+    if (ctx.locations && ctx.locations.length > 0) {
+      lines.push(`    ${colors.dim}Locations:${colors.reset}`);
+      for (const location of ctx.locations) {
+        lines.push(`      ${location}`);
+      }
+    }
     if (ctx.commandOutput) {
       lines.push(`    ${colors.dim}Command output:${colors.reset}`);
       for (const outputLine of ctx.commandOutput.split("\n")) {

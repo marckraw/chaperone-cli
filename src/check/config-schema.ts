@@ -28,6 +28,7 @@ export const RULE_TYPES = [
   "import-boundary",
   "public-api",
   "directive-export-pattern",
+  "repeated-literal",
 ] as const;
 
 export type RuleType = (typeof RULE_TYPES)[number];
@@ -238,6 +239,20 @@ export const RULE_SCHEMAS = {
     files: nonEmpty,
     directive: nonEmpty,
     allowedExportNamePatterns: stringList.min(1, "must contain at least one pattern"),
+  }),
+  "repeated-literal": z.object({
+    ...baseRuleShape,
+    type: z.literal("repeated-literal"),
+    files: nonEmpty.describe("Glob for files to scan"),
+    literalPattern: nonEmpty.optional().describe("Regex the whole literal must match to count"),
+    minTokens: z.number().int().min(1, "must be at least 1").optional().describe("Fewest whitespace-separated tokens"),
+    contextPattern: nonEmpty.optional().describe("Regex on the code: only literals in its contexts count"),
+    contextFiles: stringList.optional().describe("Globs for files where every literal counts"),
+    ignoreOrder: z.boolean().optional().describe("The same tokens in any order are the same literal"),
+    maxOccurrences: z.number().int().min(1, "must be at least 1").optional().describe("Most occurrences allowed"),
+    allow: z
+      .array(z.object({ literal: nonEmpty, reason: nonEmpty.describe("Why this literal may repeat") }))
+      .optional(),
   }),
 } satisfies Record<RuleType, z.AnyZodObject>;
 
@@ -610,6 +625,37 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
       glob(["files"]);
       regexList("allowedExportNamePatterns");
       break;
+    case "repeated-literal": {
+      glob(["files"]);
+      globList(["contextFiles"]);
+      regex(["literalPattern"]);
+      regex(["contextPattern"], "m");
+      const context = rule["contextPattern"];
+      if (typeof context === "string" && compileCheck(context, "m") === null && new RegExp(context, "m").test("")) {
+        sink.warning(
+          `"contextPattern" /${context}/ can match an empty string, so it would match everywhere; its zero-length matches are ignored`,
+          ["contextPattern"]
+        );
+      }
+      if (Array.isArray(rule["contextFiles"]) && rule["contextFiles"].length > 0 && context === undefined) {
+        sink.warning('"contextFiles" has no effect without "contextPattern": every literal counts already', [
+          "contextFiles",
+        ]);
+      }
+      const seen = new Map<string, number>();
+      const allow = Array.isArray(rule["allow"]) ? rule["allow"] : [];
+      allow.forEach((entry, index) => {
+        const literal = isPlainObject(entry) && typeof entry["literal"] === "string" ? entry["literal"].trim() : null;
+        if (literal === null) return;
+        const first = seen.get(literal);
+        if (first !== undefined) {
+          sink.warning(`"allow[${index}]" repeats "allow[${first}]" ("${literal}")`, ["allow", index]);
+        } else {
+          seen.set(literal, index);
+        }
+      });
+      break;
+    }
   }
 }
 

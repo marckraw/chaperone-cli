@@ -20,6 +20,7 @@ import {
   runDirectiveExportPatternRule,
   isDirectiveExportPatternRule,
 } from "./directive-export-pattern";
+import { runRepeatedLiteralRule, isRepeatedLiteralRule } from "./repeated-literal";
 
 export * from "./types";
 export { runFilePairingRule, isFilePairingRule } from "./file-pairing";
@@ -41,6 +42,7 @@ export {
   runDirectiveExportPatternRule,
   isDirectiveExportPatternRule,
 } from "./directive-export-pattern";
+export { runRepeatedLiteralRule, isRepeatedLiteralRule } from "./repeated-literal";
 export { detectAIInstructionFiles } from "./ai-instructions";
 
 /**
@@ -112,6 +114,10 @@ async function dispatchRule(rule: CustomRule, options: RuleRunnerOptions, onDebu
   if (isDirectiveExportPatternRule(rule)) {
     debug(`checking exports in files with "${rule.directive}"`);
     return runDirectiveExportPatternRule(rule, options);
+  }
+  if (isRepeatedLiteralRule(rule)) {
+    debug(`allowing each literal at most ${rule.maxOccurrences ?? 2} times in "${rule.files}"`);
+    return runRepeatedLiteralRule(rule, options);
   }
 
   // Unreachable for validated configs; never skip a rule silently.

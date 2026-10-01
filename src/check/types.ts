@@ -24,6 +24,7 @@ export interface CheckResult {
     exitCode?: number; // For command: actual exit code
     commandOutput?: string; // For command: stderr/stdout details
     detectedPatterns?: string[]; // What patterns were detected (e.g., hooks found)
+    locations?: string[]; // For repeated-literal and duplicate-code: every place involved, "path:line" or "path:start-end"
   };
 }
 
@@ -348,6 +349,24 @@ export interface DirectiveExportPatternRule extends BaseRule, AIGeneratedMetadat
   message?: string;
 }
 
+/**
+ * Repeated literal rule - the same string literal may appear at most maxOccurrences times
+ */
+export interface RepeatedLiteralRule extends BaseRule, AIGeneratedMetadata {
+  type: "repeated-literal";
+  files: string; // Glob for files to scan
+  literalPattern?: string; // Regex the whole (whitespace-normalized) literal must match
+  minTokens?: number; // Fewest whitespace-separated tokens a literal needs to count (default: 1)
+  contextPattern?: string; // Regex on the code: only literals in its contexts count (default: every literal)
+  contextFiles?: string[]; // Globs for files where every literal counts, whatever contextPattern says
+  ignoreOrder?: boolean; // Literals with the same tokens in any order are the same (default: false)
+  maxOccurrences?: number; // Most occurrences allowed (default: 2)
+  allow?: Array<{
+    literal: string; // A literal allowed to repeat (compared like the literals)
+    reason: string; // Why
+  }>;
+  message?: string;
+}
 
 /**
  * Union of all custom rule types
@@ -365,7 +384,8 @@ export type CustomRule =
   | ForbiddenImportRule
   | ImportBoundaryRule
   | PublicApiRule
-  | DirectiveExportPatternRule;
+  | DirectiveExportPatternRule
+  | RepeatedLiteralRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead
