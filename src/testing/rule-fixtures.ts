@@ -98,5 +98,35 @@ export const VALID_RULES: Record<RuleType, Record<string, unknown>> = {
     directive: "use client",
     allowedExportNamePatterns: ["^[A-Z]"],
   },
+  "comment-integrity": {
+    type: "comment-integrity",
+    id: "comments",
+    severity: "error",
+    files: "src/**/*.{ts,tsx}",
+  },
+  "unique-capture": {
+    type: "unique-capture",
+    id: "migration-numbers",
+    severity: "error",
+    files: "drizzle/*.sql",
+    capture: { pattern: "^(\\d{4})_", source: "basename" },
+  },
+  "repeated-literal": {
+    type: "repeated-literal",
+    id: "repeated-classes",
+    severity: "error",
+    files: "src/**/*.tsx",
+    minTokens: 4,
+    contextPattern: "\\bclassName\\s*=",
+    allow: [{ literal: "flex items-center gap-2 px-4", reason: "A layout, not a look" }],
+  },
+  "duplicate-code": {
+    type: "duplicate-code",
+    id: "copied-code",
+    severity: "error",
+    files: "src/**/*.{ts,tsx}",
+    minTokens: 100,
+    allow: [{ files: ["src/a.ts", "src/b.ts"], reason: "Merged in the next release" }],
+  },
 };
 

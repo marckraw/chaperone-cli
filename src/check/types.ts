@@ -24,6 +24,7 @@ export interface CheckResult {
     exitCode?: number; // For command: actual exit code
     commandOutput?: string; // For command: stderr/stdout details
     detectedPatterns?: string[]; // What patterns were detected (e.g., hooks found)
+    locations?: string[]; // For repeated-literal and duplicate-code: every place involved, "path:line" or "path:start-end"
   };
 }
 
@@ -348,6 +349,62 @@ export interface DirectiveExportPatternRule extends BaseRule, AIGeneratedMetadat
   message?: string;
 }
 
+/**
+ * Repeated literal rule - the same string literal may appear at most maxOccurrences times
+ */
+export interface RepeatedLiteralRule extends BaseRule, AIGeneratedMetadata {
+  type: "repeated-literal";
+  files: string; // Glob for files to scan
+  literalPattern?: string; // Regex the whole (whitespace-normalized) literal must match
+  minTokens?: number; // Fewest whitespace-separated tokens a literal needs to count (default: 1)
+  contextPattern?: string; // Regex on the code: only literals in its contexts count (default: every literal)
+  contextFiles?: string[]; // Globs for files where every literal counts, whatever contextPattern says
+  ignoreOrder?: boolean; // Literals with the same tokens in any order are the same (default: false)
+  maxOccurrences?: number; // Most occurrences allowed (default: 2)
+  allow?: Array<{
+    literal: string; // A literal allowed to repeat (compared like the literals)
+    reason: string; // Why
+  }>;
+  message?: string;
+}
+
+/**
+ * Duplicate code rule - copied blocks of at least minTokens tokens
+ */
+export interface DuplicateCodeRule extends BaseRule, AIGeneratedMetadata {
+  type: "duplicate-code";
+  files: string; // Glob for files to compare
+  minTokens?: number; // Fewest tokens a copy has (default: 100)
+  minLines?: number; // Fewest lines a copy spans (default: 5)
+  allow?: Array<{
+    files: [string, string]; // Paths or globs of two files whose copies are kept on purpose
+    reason: string; // Why
+  }>;
+  message?: string;
+}
+
+/**
+ * Comment integrity rule - block comments a merge broke (a lost opener or closer)
+ */
+export interface CommentIntegrityRule extends BaseRule, AIGeneratedMetadata {
+  type: "comment-integrity";
+  files: string; // Glob for JavaScript / TypeScript files to scan
+  message?: string;
+}
+
+/**
+ * Unique capture rule - no two files may capture the same key from their paths
+ */
+export interface UniqueCaptureRule extends BaseRule, AIGeneratedMetadata {
+  type: "unique-capture";
+  files: string; // Glob for the files whose keys must be unique
+  capture: {
+    pattern: string; // Regex applied to the path (or basename)
+    group?: number; // Capture group holding the key (default 1)
+    source?: "path" | "basename"; // What the pattern is applied to (default "path")
+  };
+  message?: string;
+}
 
 /**
  * Union of all custom rule types
@@ -365,7 +422,11 @@ export type CustomRule =
   | ForbiddenImportRule
   | ImportBoundaryRule
   | PublicApiRule
-  | DirectiveExportPatternRule;
+  | DirectiveExportPatternRule
+  | CommentIntegrityRule
+  | UniqueCaptureRule
+  | RepeatedLiteralRule
+  | DuplicateCodeRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead

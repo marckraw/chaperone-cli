@@ -149,6 +149,8 @@ describe("chaperone check visibility", () => {
 });
 
 describe("chaperone init", () => {
+  // init turns on the TypeScript runner, so the check starts tsc: well under a second here, but past
+  // bun's 5 s default on a cold CI runner (1 Oct, PR #24), which left stdout empty.
   test("writes a config that loads without warnings", () => {
     const cwd = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
     expect(runCli(["init", "--yes"], cwd).exitCode).toBe(0);
@@ -156,7 +158,7 @@ describe("chaperone init", () => {
     const json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
     expect(json.diagnostics).toEqual([]);
     expect(runCli(["init", "--yes"], cwd).exitCode).toBe(2);
-  });
+  }, 30_000);
 });
 
 describe("chaperone check --since", () => {

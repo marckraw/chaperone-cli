@@ -28,6 +28,10 @@ export const RULE_TYPES = [
   "import-boundary",
   "public-api",
   "directive-export-pattern",
+  "comment-integrity",
+  "unique-capture",
+  "repeated-literal",
+  "duplicate-code",
 ] as const;
 
 export type RuleType = (typeof RULE_TYPES)[number];
@@ -238,6 +242,50 @@ export const RULE_SCHEMAS = {
     files: nonEmpty,
     directive: nonEmpty,
     allowedExportNamePatterns: stringList.min(1, "must contain at least one pattern"),
+  }),
+  "comment-integrity": z.object({
+    ...baseRuleShape,
+    type: z.literal("comment-integrity"),
+    files: nonEmpty.describe("Glob for JavaScript and TypeScript files to scan"),
+  }),
+  "unique-capture": z.object({
+    ...baseRuleShape,
+    type: z.literal("unique-capture"),
+    files: nonEmpty.describe("Glob for the files whose keys must be unique"),
+    capture: z.object({
+      pattern: nonEmpty.describe("Regex applied to the path (or basename) that captures the key"),
+      group: z.number().int().min(0).optional().describe("Capture group holding the key (default 1)"),
+      source: z.enum(["path", "basename"]).optional().describe('What the pattern is applied to (default "path")'),
+    }),
+  }),
+  "repeated-literal": z.object({
+    ...baseRuleShape,
+    type: z.literal("repeated-literal"),
+    files: nonEmpty.describe("Glob for files to scan"),
+    literalPattern: nonEmpty.optional().describe("Regex the whole literal must match to count"),
+    minTokens: z.number().int().min(1, "must be at least 1").optional().describe("Fewest whitespace-separated tokens"),
+    contextPattern: nonEmpty.optional().describe("Regex on the code: only literals in its contexts count"),
+    contextFiles: stringList.optional().describe("Globs for files where every literal counts"),
+    ignoreOrder: z.boolean().optional().describe("The same tokens in any order are the same literal"),
+    maxOccurrences: z.number().int().min(1, "must be at least 1").optional().describe("Most occurrences allowed"),
+    allow: z
+      .array(z.object({ literal: nonEmpty, reason: nonEmpty.describe("Why this literal may repeat") }))
+      .optional(),
+  }),
+  "duplicate-code": z.object({
+    ...baseRuleShape,
+    type: z.literal("duplicate-code"),
+    files: nonEmpty.describe("Glob for files to compare"),
+    minTokens: z.number().int().min(1, "must be at least 1").optional().describe("Fewest tokens a copy has"),
+    minLines: z.number().int().min(1, "must be at least 1").optional().describe("Fewest lines a copy spans"),
+    allow: z
+      .array(
+        z.object({
+          files: z.array(nonEmpty).length(2, "must name exactly two files"),
+          reason: nonEmpty.describe("Why the copy is kept"),
+        })
+      )
+      .optional(),
   }),
 } satisfies Record<RuleType, z.AnyZodObject>;
 
@@ -610,6 +658,50 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
       glob(["files"]);
       regexList("allowedExportNamePatterns");
       break;
+    case "comment-integrity":
+      glob(["files"]);
+      break;
+    case "unique-capture":
+      glob(["files"]);
+      regex(["capture", "pattern"]);
+      break;
+    case "repeated-literal": {
+      glob(["files"]);
+      globList(["contextFiles"]);
+      regex(["literalPattern"]);
+      regex(["contextPattern"], "m");
+      const context = rule["contextPattern"];
+      if (typeof context === "string" && compileCheck(context, "m") === null && new RegExp(context, "m").test("")) {
+        sink.warning(
+          `"contextPattern" /${context}/ can match an empty string, so it would match everywhere; its zero-length matches are ignored`,
+          ["contextPattern"]
+        );
+      }
+      if (Array.isArray(rule["contextFiles"]) && rule["contextFiles"].length > 0 && context === undefined) {
+        sink.warning('"contextFiles" has no effect without "contextPattern": every literal counts already', [
+          "contextFiles",
+        ]);
+      }
+      const seen = new Map<string, number>();
+      const allow = Array.isArray(rule["allow"]) ? rule["allow"] : [];
+      allow.forEach((entry, index) => {
+        const literal = isPlainObject(entry) && typeof entry["literal"] === "string" ? entry["literal"].trim() : null;
+        if (literal === null) return;
+        const first = seen.get(literal);
+        if (first !== undefined) {
+          sink.warning(`"allow[${index}]" repeats "allow[${first}]" ("${literal}")`, ["allow", index]);
+        } else {
+          seen.set(literal, index);
+        }
+      });
+      break;
+    }
+    case "duplicate-code": {
+      glob(["files"]);
+      const allow = Array.isArray(rule["allow"]) ? rule["allow"] : [];
+      allow.forEach((_, index) => globList(["allow", index, "files"]));
+      break;
+    }
   }
 }
 

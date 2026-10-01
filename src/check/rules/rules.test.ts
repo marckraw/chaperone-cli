@@ -264,6 +264,31 @@ describe("symbol-reference", () => {
     const result = await runSymbolReferenceRule(RULE, { cwd, ...OPTIONS });
     expect(result.results.map((entry) => entry.context?.symbol)).toEqual(["sub"]);
   });
+
+  test("a name in a comment is not a reference, but one in code or a string is", async () => {
+    const RULE: SymbolReferenceRule = {
+      type: "symbol-reference",
+      id: "tested",
+      severity: "error",
+      sourceFiles: "src/**/*.pure.ts",
+      targetFiles: "src/**/*.pure.test.ts",
+      targetPair: { from: "\\.pure\\.ts$", to: ".pure.test.ts" },
+    };
+    const cwd = makeProject({
+      "src/words.pure.ts": [
+        "export const countWords = (text: string) => text.split(' ').length;",
+        "export const firstWord = (text: string) => text.split(' ')[0];",
+        "export const lastWord = (text: string) => text.split(' ').at(-1);",
+      ].join("\n"),
+      "src/words.pure.test.ts": [
+        "// TODO: test countWords",
+        "/* lastWord too */",
+        'test("firstWord", () => expect(firstWord("a b")).toBe("a"));',
+      ].join("\n"),
+    });
+    const result = await runSymbolReferenceRule(RULE, { cwd, ...OPTIONS });
+    expect(result.results.map((entry) => entry.context?.symbol)).toEqual(["countWords", "lastWord"]);
+  });
 });
 
 describe("retired-path", () => {

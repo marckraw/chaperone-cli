@@ -157,3 +157,19 @@ describe("partly checked rules", () => {
     expect(json.gaps).toEqual(["1 rule only partly checked (layers; see the notices)"]);
   });
 });
+
+describe("locations", () => {
+  test("every place of a repeated literal or a copy is listed in text and ai output, and kept in json", () => {
+    const repeated = result({
+      rule: "repeated-literal/classes",
+      message: '"a b c d" appears 3 times; at most 2 allowed',
+      context: { matchedText: "a b c d", locations: ["src/a.tsx:1:42", "src/b.tsx:4:9", "src/c.tsx:7:3"] },
+    });
+    const text = formatText(summary({ results: [repeated] }));
+    expect(text).toContain("    Locations:\n      src/a.tsx:1:42\n      src/b.tsx:4:9\n      src/c.tsx:7:3");
+    expect(formatAI(summary({ results: [repeated] }))).toContain(
+      "  - Locations: `src/a.tsx:1:42`, `src/b.tsx:4:9`, `src/c.tsx:7:3`"
+    );
+    expect(JSON.parse(formatJson(summary({ results: [repeated] }))).results[0].context.locations).toHaveLength(3);
+  });
+});

@@ -140,7 +140,7 @@ chaperone version
 | `--copy` | Copy the remaining problems to the clipboard (ai format) |
 | `--no-progress` | Disable the progress spinner |
 | `--debug` | Print rule execution details (to stderr) |
-| `--since <git-ref>` | Custom rules only check files changed since the merge base of `<git-ref>` and `HEAD`, plus uncommitted and untracked files. Layer membership, module discovery and symbol targets still use every file; `package-fields` and `command` rules always run; TypeScript, ESLint and Prettier still check the whole project. The report says the run was limited. |
+| `--since <git-ref>` | Custom rules only check files changed since the merge base of `<git-ref>` and `HEAD`, plus uncommitted and untracked files. Layer membership, module discovery and symbol targets still use every file, as do `unique-capture`, `repeated-literal` and `duplicate-code`, which count and compare every file but report only what involves a changed one; `package-fields` and `command` rules always run; TypeScript, ESLint and Prettier still check the whole project. The report says the run was limited. |
 
 Unknown options, missing option values and unknown `--format` values are usage errors (exit code 2).
 
@@ -250,12 +250,12 @@ Custom rules live in `rules.custom`. Every rule has these common fields:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | `string` | Yes | One of the 13 types below. |
+| `type` | `string` | Yes | One of the 17 types below. |
 | `id` | `string` | Yes | Unique identifier. A rule with the same id as a preset rule replaces it. |
 | `severity` | `"error" \| "warning"` | Yes | Errors make `check` exit with 1; warnings are only reported. |
 | `exclude` | `string[]` | No | Extra exclude patterns for this rule (same semantics as the global `exclude`). |
 | `disabled` | `boolean` | No | `true` switches the rule off (also rules inherited from presets). A disabled entry only needs `id`. |
-| `message` | `string` | No* | Custom violation message (*required for `regex`). |
+| `message` | `string` | No* | Custom violation message (*required for `regex`). For `comment-integrity`, `unique-capture`, `repeated-literal` and `duplicate-code`, the finding follows in parentheses. |
 | `source`, `originalText` | `string` | No | Written by `chaperone analyze` to trace a rule to its instruction. |
 
 A rule whose file globs match no files at all is reported as **"matched no files, so it checked nothing"** in every output format, and the status line says `PASSED, but not everything was checked`. That usually means a typo in the glob.
@@ -541,6 +541,182 @@ In files that start with a directive (such as `"use client"`), every runtime nam
 
 Type-only exports and default exports are not checked; `export { a as b }`, `export * as ns from` and enums are.
 
+The next four types catch what review lets through: what a merge breaks (`comment-integrity`, `unique-capture`) and copies (`repeated-literal`, `duplicate-code`). They report the same way: each finding once, with every place it involves under "Locations" (`context.locations` in JSON), and a `message` comes first with the finding in parentheses after it.
+
+### `comment-integrity`
+
+Block comments a merge broke, in JavaScript and TypeScript files: a doc comment that lost its `/**` (its remaining lines now sit in code, and the compiler stops far from the cause), one that lost its `*/` (the next comment opens inside it, and whatever lay between them disappears into one comment with no error at all), and a comment that never closes.
+
+```json
+{
+  "type": "comment-integrity",
+  "id": "merge-broken-comments",
+  "severity": "error",
+  "files": "{apps,packages,scripts}/**/*.{ts,tsx,mts,js,mjs,jsx}",
+  "message": "A merge broke a comment"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `files` | Yes | Glob for JavaScript and TypeScript files to scan. |
+
+- **What counts:** a line that reads like a comment's middle or end (`* text`, `*/`) with no comment open, reported once per run of such lines; a line inside a comment that opens another (`/*` at its start), reported with both lines under "Locations"; and a comment that never closes. Strings, template literals, regular expressions and JSX text may hold `/*` or lines starting with `*` without counting.
+- **Reports:** each problem at its line (`A comment opens inside the comment from line 4: a merge may have dropped that one's */`). Under `--since`, only changed files are read.
+- **Limits:** it reads the file as a tokenizer does, not as a compiler: it finds comments a merge broke, not every syntax error.
+
+### `unique-capture`
+
+No two files may capture the same key from their paths: numbered files that two branches add at once, such as migrations (two `0016_*.sql` after a merge) or ADRs.
+
+```json
+{
+  "type": "unique-capture",
+  "id": "migration-numbers",
+  "severity": "error",
+  "files": "packages/db/drizzle/*.sql",
+  "capture": { "pattern": "^(\\d{4})_[a-z0-9_]+\\.sql$", "source": "basename" },
+  "message": "Two migrations share a number: generate yours again after the other branch's"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `files` | Yes | Glob for the files whose keys must be unique. |
+| `capture.pattern` | Yes | Regex applied to each path (or file name) that captures the key. Files it doesn't match are ignored. |
+| `capture.group` | No | The capture group holding the key (default `1`). |
+| `capture.source` | No | `"path"` (default) or `"basename"`: what the pattern is applied to. |
+
+- **Reports:** each shared key once, at its first file in path order (`2 files share the key "0016"`), with every file that shares it under "Locations". Under `--since`, a key is reported when one of its files changed; every file still counts.
+- **Limits:** it compares paths, not contents. A migration tool's other invariants (a journal's order, a snapshot chain, a migration that lost its statements) need their own checks.
+
+### `repeated-literal`
+
+The same string literal may appear at most `maxOccurrences` times across the matched files: "duplicate on purpose up to twice; extract on the third use". Made for Tailwind class strings, and as useful for error messages, route paths or any magic string.
+
+```json
+{
+  "type": "repeated-literal",
+  "id": "repeated-classes",
+  "severity": "error",
+  "files": "{apps,packages}/*/src/**/*.{ts,tsx}",
+  "exclude": ["**/*.test.{ts,tsx}", "**/*.stories.tsx"],
+  "minTokens": 4,
+  "contextPattern": "\\bclassName\\s*=|(?:^|[^\\w$.])(?:cn|cva)\\s*\\(",
+  "contextFiles": ["**/*.styles.ts"],
+  "ignoreOrder": true,
+  "maxOccurrences": 2,
+  "allow": [
+    { "literal": "flex min-w-0 flex-1 flex-col", "reason": "A text column in four unrelated parts: layout, not a look" }
+  ],
+  "message": "A class string of 4+ utilities appears more than twice: make it a part, a variant or a shared constant"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `files` | Yes | Glob for files to scan. |
+| `literalPattern` | No | Regex the whole literal must match (it is anchored for you), after whitespace is normalized. Default: every literal. |
+| `minTokens` | No | Fewest whitespace-separated tokens a literal needs to count (default `1`). With `4`, `"flex items-center"` repeats freely. |
+| `contextPattern` | No | Where literals count (default: everywhere). See below. |
+| `contextFiles` | No | Globs for files where every literal counts, whatever `contextPattern` says (e.g. `**/*.styles.ts`). |
+| `ignoreOrder` | No | `true`: literals with the same tokens in any order are the same (`"b a"` is `"a b"`), and a token repeated inside a literal counts once. Default `false`. |
+| `maxOccurrences` | No | Most occurrences allowed (default `2`): the third fails. |
+| `allow` | No | `[{ "literal": "...", "reason": "..." }]`: literals kept on purpose. The reason is required. Entries are compared like the literals (normalized, and in any order with `ignoreOrder`); an entry that no longer excuses anything is reported, so the list can't outlive its reasons. |
+
+- **What counts:** quoted strings, JSX attribute strings (`className="..."`) and template literals without `${...}`, compared after trimming and collapsing whitespace. **Never:** comments, templates with `${...}` (what they hold is known only when they run), module specifiers (`from "x"`, `import("x")`, `require("x")`, `declare module "x"`), directives (`"use client"`), and anything between `chaperone-ignore-start` and `chaperone-ignore-end` comments.
+- **`contextPattern`** is a regex (flags `m`) matched against the code with comments, the text of every literal and JSX text blanked out, so it only ever finds code. A match that ends with `(`, `[` or `{`, or is followed by one, opens a context up to the matching bracket, and every literal inside counts (`cn(...)`, `cva(...)`, `className={...}`, with their ternaries and objects). Any other match counts the literal right after it (`className="..."`). Only where a match ends matters, so consume a character rather than use a lookbehind, which is slower: `(?:^|[^\w$.])cn\s*\(` rather than `(?<![\w$.])cn\s*\(`. A `contextPattern` that matches nowhere is reported as a notice.
+- Each literal over the limit is reported once, at its first place, with every place as `path:line:column` (listed under "Locations"). Under `--since`, a literal is reported when one of its copies is in a changed file; every file is still counted, and an unused allow entry is reported either way.
+- **Limits:** literals are read with Chaperone's JavaScript/TypeScript tokenizer (JSX included). Other C-family files work (`"..."`, `'...'`, `` `...` ``, `//` and `/* */` comments), but not syntaxes with other strings or comments (Python's `#` and triple quotes, for one). It compares text, not values: `"a b" + " c d"` is two literals, and a string built at runtime is none.
+
+### `duplicate-code`
+
+Copied code: a block of at least `minTokens` tokens that appears twice across the matched files. Renaming a variable breaks a copy where the name changes; reformatting, re-indenting and re-commenting do not hide one.
+
+```json
+{
+  "type": "duplicate-code",
+  "id": "copied-code",
+  "severity": "error",
+  "files": "{apps/*/src,packages/ui/src}/**/*.{ts,tsx}",
+  "exclude": ["**/*.test.{ts,tsx}", "**/*.stories.tsx"],
+  "minTokens": 100,
+  "minLines": 5,
+  "allow": [
+    {
+      "files": ["src/widgets/message-list.container.tsx", "src/widgets/thread-list.container.tsx"],
+      "reason": "The same parts around the viewport, but different data; one part for both is a measured change of its own"
+    }
+  ]
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `files` | Yes | Glob for files to compare. |
+| `minTokens` | No | Fewest tokens a copy has (default `100`). A pasted 30-line component is about 120 tokens; a few props or an import list stay under. |
+| `minLines` | No | Fewest lines a copy spans, in either place (default `5`), so long one-line data does not count. |
+| `allow` | No | `[{ "files": ["a", "b"], "reason": "..." }]`: copies kept on purpose between two files (paths or globs, in either order; the same file twice for a copy inside one file). The reason is required, and an entry that matches no copy is reported. |
+
+- **Tokens:** identifiers, literals and punctuation are kept as they are; whitespace, line breaks and comments are dropped. Token counts follow jscpd (`===` is one token, `</` two, a template literal's text parts count), so a `minTokens` tuned for jscpd means the same here. Whitespace between JSX tags counts as one token, whatever its width.
+- **Reports:** each copy is reported once, at the copy, with both places and their line ranges (`src/b.tsx:12-32` and `src/a.tsx:12-32`). Files are read in path order and every copy is reported against the block's first place, so a block in three files gives a–b and a–c, never b–c, and the same tree always gives the same report.
+- **Ignore comments:** code between `chaperone-ignore-start` and `chaperone-ignore-end` comments is left out, and so is code between jscpd's `jscpd:ignore-start` and `jscpd:ignore-end`, so a jscpd setup moves over unchanged. Say why in the comment.
+- Under `--since`, a copy is reported when either of its files changed; every file is still compared, and an unused allow entry is reported either way.
+- **Speed:** a rolling hash (Rabin–Karp) over the tokens, with no dependency: about 0.2 s of work for 1,200 TypeScript files.
+- **Unlike jscpd:** a copy between a `.ts` and a `.tsx` file counts (jscpd compares files of one format only); re-indented JSX is still a copy; a copy's last line is the line of its last token; and there is no `threshold` on the overall share of copied lines.
+
+## Recipes
+
+Rule types work best together. These are examples to adapt, not presets: the globs, the names and the limits are one project's.
+
+### Keeping a design system's boundary
+
+accent., a team chat, keeps its features from building by hand what its design system (`packages/ui`) already has. Its UI audit found that most of 146 findings had one cause: parts missing from the design system, so each feature built its own search field, empty state or header, and the copies drifted apart. Three kinds of rules now hold the line between the design system and the features:
+
+1. **`regex`: a pattern that means "built by hand"**, with a message that names the part to use instead. One rule per job the design system owns:
+
+   ```json
+   {
+     "id": "use-spinner",
+     "type": "regex",
+     "severity": "error",
+     "files": "apps/*/src/**/*.{ts,tsx}",
+     "exclude": ["**/*.test.{ts,tsx}"],
+     "pattern": "\\banimate-spin\\b",
+     "message": "A spinner built by hand: give the Button pending (with pendingLabel), or use Spinner from @accent/ui."
+   }
+   ```
+
+2. **`repeated-literal`: a class string's third copy** is a part, a variant or a shared constant (the [`repeated-literal`](#repeated-literal) example above). A regex sees only what is written where it looks, so a look kept in a `*.styles.ts` constant passes the regex rules; `contextFiles` is what catches that constant's third copy.
+3. **`duplicate-code`: a pasted component** fails on its second copy (the [`duplicate-code`](#duplicate-code) example above): a hundred identical tokens are never a coincidence of style, where two short class strings may be.
+
+Roll each rule out as a `"warning"`, fix what it finds, put what stays on purpose in `allow` with a reason, and make it an `"error"` once it passes. The allow lists stay honest on their own: an entry that no longer excuses anything fails the check.
+
+### Surviving merges
+
+Agents resolving merge conflicts in accent. broke doc comments twice in one day (a `/**` lost, so the comment's lines became code; a `*/` lost, so a declaration vanished into the next comment), and two branches' migrations collided three times (two `0016`s, two `0017`s, two `0020`s). Neither fails a build where it happens, so two rules check for them:
+
+```json
+[
+  {
+    "id": "merge-broken-comments",
+    "type": "comment-integrity",
+    "severity": "error",
+    "files": "{apps,packages,scripts}/**/*.{ts,tsx,mts,js,mjs,jsx}"
+  },
+  {
+    "id": "migration-numbers",
+    "type": "unique-capture",
+    "severity": "error",
+    "files": "packages/db/drizzle/*.sql",
+    "capture": { "pattern": "^(\\d{4})_[a-z0-9_]+\\.sql$", "source": "basename" },
+    "message": "Two migrations share a number: the branch that merged later generates its migration again"
+  }
+]
+```
+
+Run them in the pre-push hook as well as CI: a merge resolution is the moment they catch, and the sooner the better.
+
 ## Presets
 
 Presets are shareable rule bundles used through `extends`:
@@ -590,7 +766,7 @@ All three formats contain the same facts:
 - each tool runner's status (passed, failed, skipped with the reason, or could not run) and duration;
 - rules that matched no files, rule notices (empty or shadowed layers, modules globs without modules) and disabled rules;
 - configuration warnings;
-- the results, with context: matched text or offending import, expected vs actual, suggestions, command output.
+- the results, with context: matched text or offending import, expected vs actual, suggestions, command output, and every place a finding involves ("Locations": a copy and its original, a repeated literal's copies, the files that share a key, a comment opened inside another).
 
 `--format json` adds machine-readable fields: `status` (`passed`, `passed-with-gaps`, `failed`), `gaps`, `runners`, `rules` (per-rule `status`, `filesChecked`, counts, notices), `disabledRules`, `diagnostics` and `since`, next to the existing `success`, `summary`, `results` and `bySource`.
 

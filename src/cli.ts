@@ -236,7 +236,7 @@ async function runCheck(args: string[]): Promise<number> {
       process.stderr.write("\n");
     }
 
-    console.log(output);
+    await writeReport(output);
 
     // If --copy flag is set and there are remaining errors, copy to clipboard
     if (parsedArgs.copy && summary.results.length > 0) {
@@ -273,6 +273,17 @@ async function runCheck(args: string[]): Promise<number> {
     }
     return EXIT.ERROR;
   }
+}
+
+/**
+ * Writes the report to stdout, and resolves once a pipe has taken all of it. With console.log the
+ * compiled binary lost everything past a pipe's first 64 KB when the reader was slower than the
+ * write: `chaperone check --format json | jq` read half a document.
+ */
+async function writeReport(output: string): Promise<void> {
+  const text = `${output}\n`;
+  if (process.stdout.write(text)) return;
+  await new Promise<void>((resolve) => process.stdout.once("drain", () => resolve()));
 }
 
 async function main(): Promise<void> {

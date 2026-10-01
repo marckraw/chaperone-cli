@@ -67,6 +67,9 @@ function formatResultForAI(result: CheckResult): string {
   if (ctx?.detectedPatterns?.length) {
     lines.push(`  - Detected: ${ctx.detectedPatterns.join(", ")}`);
   }
+  if (ctx?.locations?.length) {
+    lines.push(`  - Locations: ${ctx.locations.map(code).join(", ")}`);
+  }
   if (result.suggestion) {
     lines.push(`  - Suggestion: ${result.suggestion}`);
   }

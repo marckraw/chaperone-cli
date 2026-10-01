@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeBrackets, jsxEnabledFor, tokenize, type Token } from "./js-lexer";
+import { analyzeBrackets, type Comment, jsxEnabledFor, tokenize, type Token } from "./js-lexer";
 
 const summary = (tokens: Token[]) => tokens.map((token) => `${token.type}:${token.value}`);
 
@@ -91,5 +91,121 @@ describe("tokenize: TypeScript operators", () => {
     expect(tokens.map((token) => token.value)).toContain("later");
     // A real element followed by parenthesised text is still JSX
     expect(tokenize("const el = <Label>(optional)</Label>;").some((token) => token.type === "jsx")).toBe(true);
+  });
+});
+
+describe("comments", () => {
+  test("reports the comments it skips, and never the ones inside strings, templates or regexes", () => {
+    const code = [
+      "// line",
+      "const a = '/* not */'; /** doc */",
+      "const b = `// not ${/* inside */ 1}`;",
+      "const c = /\\/*x/; /* open",
+    ].join("\n");
+    const comments: Comment[] = [];
+    tokenize(code, { comments });
+    expect(comments.map(({ start, end, block, closed }) => [code.slice(start, end), block, closed])).toEqual([
+      ["// line", false, true],
+      ["/** doc */", true, true],
+      ["/* inside */", true, true],
+      ["/* open", true, false],
+    ]);
+  });
+
+  test("reports comments inside JSX expressions", () => {
+    const code = "const a = <div>{/* note */}<b x={1 /* one */} /></div>;";
+    const comments: Comment[] = [];
+    tokenize(code, { comments });
+    expect(comments.map(({ start, end }) => code.slice(start, end))).toEqual(["/* note */", "/* one */"]);
+  });
+});
+
+describe("tokenize: jsxContents", () => {
+  test("emits tags, attributes, attribute strings, text and expression containers", () => {
+    const tokens = tokenize(
+      `const a = <motion.div className="x  y" {...rest} on={() => go(1)}>Hi there <B k='v' /></motion.div>;`,
+      { jsxContents: true }
+    );
+    expect(summary(tokens)).toEqual([
+      "name:const",
+      "name:a",
+      "punct:=",
+      "punct:<",
+      "name:motion.div",
+      "name:className",
+      "punct:=",
+      "string:x  y",
+      "punct:{",
+      "punct:...",
+      "name:rest",
+      "punct:}",
+      "name:on",
+      "punct:=",
+      "punct:{",
+      "punct:(",
+      "punct:)",
+      "punct:=>",
+      "name:go",
+      "punct:(",
+      "number:1",
+      "punct:)",
+      "punct:}",
+      "punct:>",
+      "jsx-text:Hi there",
+      "punct:<",
+      "name:B",
+      "name:k",
+      "punct:=",
+      "string:v",
+      "punct:/>",
+      "punct:</",
+      "name:motion.div",
+      "punct:>",
+      "punct:;",
+    ]);
+  });
+
+  test("whitespace between tags is one empty jsx-text token, and text is trimmed and collapsed", () => {
+    const tokens = tokenize("const a = (\n  <p>\n    <b />\n    two   words\n  </p>\n);", { jsxContents: true });
+    expect(tokens.filter((token) => token.type === "jsx-text").map((token) => token.value)).toEqual(["", "two words"]);
+  });
+
+  test("an element is an operand, so a / after it divides; fragments and nested elements work", () => {
+    const tokens = tokenize("const a = <><b>{c}</b></> / 2;", { jsxContents: true });
+    expect(tokens.some((token) => token.type === "regex")).toBe(false);
+    expect(summary(tokens).slice(3)).toEqual([
+      "punct:<",
+      "punct:>",
+      "punct:<",
+      "name:b",
+      "punct:>",
+      "punct:{",
+      "name:c",
+      "punct:}",
+      "punct:</",
+      "name:b",
+      "punct:>",
+      "punct:</",
+      "punct:>",
+      "punct:/",
+      "number:2",
+      "punct:;",
+    ]);
+  });
+
+  test("without jsxContents an element stays one jsx token", () => {
+    expect(summary(tokenize('const a = <div className="x">t</div>;'))).toEqual([
+      "name:const",
+      "name:a",
+      "punct:=",
+      "jsx:",
+      "punct:;",
+    ]);
+  });
+
+  test("never throws on malformed JSX", () => {
+    for (const source of ["<div><p>", "<a b={", "<a b='x", "</", "<>{</>", "<a>{`${</a>"]) {
+      expect(() => tokenize(source, { jsxContents: true })).not.toThrow();
+    }
   });
 });
