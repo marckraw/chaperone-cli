@@ -29,6 +29,7 @@ export const RULE_TYPES = [
   "public-api",
   "directive-export-pattern",
   "repeated-literal",
+  "duplicate-code",
 ] as const;
 
 export type RuleType = (typeof RULE_TYPES)[number];
@@ -252,6 +253,21 @@ export const RULE_SCHEMAS = {
     maxOccurrences: z.number().int().min(1, "must be at least 1").optional().describe("Most occurrences allowed"),
     allow: z
       .array(z.object({ literal: nonEmpty, reason: nonEmpty.describe("Why this literal may repeat") }))
+      .optional(),
+  }),
+  "duplicate-code": z.object({
+    ...baseRuleShape,
+    type: z.literal("duplicate-code"),
+    files: nonEmpty.describe("Glob for files to compare"),
+    minTokens: z.number().int().min(1, "must be at least 1").optional().describe("Fewest tokens a copy has"),
+    minLines: z.number().int().min(1, "must be at least 1").optional().describe("Fewest lines a copy spans"),
+    allow: z
+      .array(
+        z.object({
+          files: z.array(nonEmpty).length(2, "must name exactly two files"),
+          reason: nonEmpty.describe("Why the copy is kept"),
+        })
+      )
       .optional(),
   }),
 } satisfies Record<RuleType, z.AnyZodObject>;
@@ -654,6 +670,12 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
           seen.set(literal, index);
         }
       });
+      break;
+    }
+    case "duplicate-code": {
+      glob(["files"]);
+      const allow = Array.isArray(rule["allow"]) ? rule["allow"] : [];
+      allow.forEach((_, index) => globList(["allow", index, "files"]));
       break;
     }
   }

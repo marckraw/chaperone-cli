@@ -60,6 +60,7 @@ export type {
   PublicApiRule,
   DirectiveExportPatternRule,
   RepeatedLiteralRule,
+  DuplicateCodeRule,
   AIGeneratedMetadata,
   AIInstructionFile,
   ToolConfig,

@@ -369,6 +369,21 @@ export interface RepeatedLiteralRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
+ * Duplicate code rule - copied blocks of at least minTokens tokens
+ */
+export interface DuplicateCodeRule extends BaseRule, AIGeneratedMetadata {
+  type: "duplicate-code";
+  files: string; // Glob for files to compare
+  minTokens?: number; // Fewest tokens a copy has (default: 100)
+  minLines?: number; // Fewest lines a copy spans (default: 5)
+  allow?: Array<{
+    files: [string, string]; // Paths or globs of two files whose copies are kept on purpose
+    reason: string; // Why
+  }>;
+  message?: string;
+}
+
+/**
  * Union of all custom rule types
  */
 export type CustomRule =
@@ -385,7 +400,8 @@ export type CustomRule =
   | ImportBoundaryRule
   | PublicApiRule
   | DirectiveExportPatternRule
-  | RepeatedLiteralRule;
+  | RepeatedLiteralRule
+  | DuplicateCodeRule;
 
 /**
  * @deprecated Use RegexRule with source metadata instead
