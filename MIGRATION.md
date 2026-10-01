@@ -1,8 +1,35 @@
-# Moving copy checks into Chaperone
+# Migrating to Chaperone 0.9
 
-Nothing here is required: every 0.8 config keeps working. Two rule types do what projects used to script or run jscpd for, so the check becomes a few lines of config, runs in the same pass as the other rules, and needs no dependency.
+0.9 adds four rule types and two fixes. A config that passes on 0.8 keeps working; one fix can turn up violations that were always there (below). Coming from 0.7.x? Read [Coming from 0.7.x](#coming-from-07x-what-08-changed) too: 0.8's changes apply to you as well.
 
-## From jscpd to `duplicate-code`
+## What's new in 0.9
+
+Four rule types for what review lets through, each one a few lines of config instead of a script:
+
+| Rule type | Fails on | Replaces |
+|-----------|----------|----------|
+| `comment-integrity` | block comments a merge broke: a doc comment that lost its `/**` or its `*/`, a comment that never closes | a script that scans for comment lines outside comments |
+| `unique-capture` | two files that capture the same key from their paths, such as two migrations numbered `0016` | a script that checks migration or ADR numbering |
+| `repeated-literal` | a string literal's copies over a limit, such as a Tailwind class string's third copy | a script that counts class strings |
+| `duplicate-code` | a copied block of `minTokens` tokens or more, found natively (no jscpd) | jscpd and a wrapper for its allowlist |
+
+They report alike: each finding once, with every place it involves under "Locations" (`context.locations` in `--format json`), and an `allow` list (where there is one) whose entries need a reason and are reported once they excuse nothing. See [Custom Rule Types](./README.md#custom-rule-types) and the [Recipes](./README.md#recipes).
+
+Two fixes:
+
+- **The whole report through a pipe.** The compiled binary could lose everything past the first 64 KB of a report when the reader was slower than the write (`chaperone check --format json | jq` read half a document). The report is now written in full.
+- **symbol-reference: a name in a comment is not a reference.** A test that only mentions an export in a comment used to satisfy rules such as "every pure function is tested". Comments in the target files are now ignored; strings still count (`describe("formatPrice", …)`).
+
+## What might newly fail
+
+- **symbol-reference rules** can report new "not referenced" violations: an export that a target file only named in a comment (often a test's header comment) was never really referenced. Reference it for real, usually by calling it in the test. Do not add a string or a comment to satisfy the rule. On one 2,000-file project the upgrade found none, so expect few.
+- Nothing else changes for existing rules: the four new types run only where a config adds them.
+
+## Moving checks into Chaperone
+
+Optional, and worth it: a check that is config runs in the same pass as the others, honours `--since`, reports in every format, and its config is validated. Replace a script only once the rule finds what the script finds (see [Prove parity before deleting a script](#prove-parity-before-deleting-a-script)).
+
+### From jscpd to `duplicate-code`
 
 | `.jscpd.json` | `duplicate-code` rule |
 |---------------|-----------------------|
@@ -17,7 +44,7 @@ Nothing here is required: every 0.8 config keeps working. Two rule types do what
 
 Expect the same copies (on one 1,200-file TypeScript project, the same pairs, line ranges and token counts). The known differences each find more: a copy between a `.ts` and a `.tsx` file counts, re-indented JSX is still a copy, and a copy spanning exactly `minLines` lines counts (jscpd 5 wants one more). A copy's last line is the line of its last token, where jscpd sometimes reports the next one.
 
-## From a class-string script to `repeated-literal`
+### From a class-string script to `repeated-literal`
 
 A script that counts copies of class strings in `className`, `cn(...)` and `cva(...)`:
 
@@ -37,15 +64,51 @@ A script that counts copies of class strings in `className`, `cn(...)` and `cva(
 }
 ```
 
-`attributes` and `functions` become one `contextPattern` (an attribute name followed by `=`, a function name followed by `(`), class files become `contextFiles`, "the same utilities in any order" is `ignoreOrder`, and `allowlist: [{ classes, reason }]` becomes `allow: [{ literal, reason }]`. Then delete the script and its `command` rule.
+`attributes` and `functions` become one `contextPattern` (an attribute name followed by `=`, a function name followed by `(`), class files become `contextFiles`, "the same utilities in any order" is `ignoreOrder`, and `allowlist: [{ classes, reason }]` becomes `allow: [{ literal, reason }]`. Once parity holds (below), delete the script and its `command` rule.
 
-# Migrating to Chaperone 0.8
+### From a doc-comment script to `comment-integrity`
+
+```json
+{
+  "id": "merge-broken-comments",
+  "type": "comment-integrity",
+  "severity": "error",
+  "files": "{apps,packages,scripts}/**/*.{ts,tsx,mts,js,mjs,jsx}"
+}
+```
+
+Point `files` at what the script walked, and exclude what it skipped (build output, generated files). It reports the same three problems at the same lines: a comment line with no comment open (once per run of lines), a comment opening inside another (with the outer comment's line), and a comment that never closes.
+
+### From a migration-numbering script to `unique-capture`
+
+```json
+{
+  "id": "migration-numbers",
+  "type": "unique-capture",
+  "severity": "error",
+  "files": "db/migrations/*.sql",
+  "capture": { "pattern": "^(\\d{4})_[a-z0-9_]+\\.sql$", "source": "basename" }
+}
+```
+
+Copy the script's file-name pattern into `capture.pattern`, with the number as the first group: files the pattern doesn't match are ignored, as a script that skips them would. `unique-capture` only replaces the duplicate-number check. A script that also checks a migration journal (order, dates), a snapshot chain, migrations that run no SQL, or merged migrations that changed keeps doing so: shrink the script to those checks, or keep it whole.
+
+### Prove parity before deleting a script
+
+1. Run the script and the new rule on the current tree, and compare what they report: the same files, lines and groups. Differences need an explanation (the rule's docs list the known ones), not a shrug.
+2. Break the tree on purpose, in a scratch copy or a branch you throw away: paste a component into a second file, add a third copy of a class string, delete a doc comment's `/**`, copy a migration under the same number. Run both again: each must report the break.
+3. Carry over the script's allowlist entry by entry, with its reason. An entry the rule reports as unused was stale in the script too: remove it, don't keep it quiet.
+4. Only then delete the script, its `command` rule and any dependency it alone needed (jscpd).
+
+## Coming from 0.7.x: what 0.8 changed
+
+Skip this part if you are on 0.8 already. From 0.7.x (or older), everything below applies on top of 0.9's changes.
 
 Chaperone 0.8 is a "trust first" release. Until 0.7 a lot could go wrong silently: an invalid rule was skipped, a crashed tool counted as a pass, a glob that matched nothing passed, and `--format json` started with terminal escape codes. 0.8 makes all of that loud. Most configs keep working, but some will now fail, and some will find violations that were always there.
 
 Run `chaperone check` once after upgrading. Exit code **2** means the configuration needs fixing (the list of problems is printed, all at once); exit code **1** means real violations.
 
-## What changed
+### What changed in 0.8
 
 - **Config validation.** Every rule, in your config and in every preset, is validated when it loads. Unknown or removed rule types, invalid severities, missing or mistyped fields, invalid regexes and globs are errors (exit 2). Unknown fields are warnings with "did you mean" suggestions.
 - **Exit codes.** `0` passed, `1` errors found, `2` configuration, usage or internal error (was `1`). Unknown options and bad `--format` values are usage errors instead of being ignored.
@@ -59,9 +122,9 @@ Run `chaperone check` once after upgrading. Exit code **2** means the configurat
 - **`chaperone analyze`** patches only your own config file (keeps `extends`, never inlines presets) and never writes after a load failure.
 - **New:** `check --since <git-ref>`, `CHAPERONE_NO_UPDATE_CHECK=1`.
 
-## What might newly fail, and how to fix it
+### What might newly fail after 0.8, and how to fix it
 
-### 1. Removed rule types (exit 2)
+#### 1. Removed rule types (exit 2)
 
 `relationship`, `file-naming`, `file-structure` and `file-suffix-content` were removed in 0.5.0 but were silently skipped until now. They are now errors.
 
@@ -95,11 +158,11 @@ Other `then` actions: `mustNotHaveCompanion` → `file-pairing` with `mustExist:
 
 `file-structure` has no direct replacement: use `file-pairing` (`mustExist: true`) for required companions, `retired-path` for unwanted locations, or a `command` rule that runs a script.
 
-### 2. Invalid severities (exit 2)
+#### 2. Invalid severities (exit 2)
 
 `"severity"` must be `"error"` or `"warning"`. A typo such as `"eror"` used to make the rule's violations count as neither errors nor warnings, so the rule could never fail the check. The error message suggests the closest value.
 
-### 3. Missing or mistyped fields (exit 2)
+#### 3. Missing or mistyped fields (exit 2)
 
 Rules that miss a required field used to crash (`undefined is not an object (evaluating '$.match')`) or quietly do nothing. The error now names the rule id and the field, e.g. `rules.custom[3].files (rule "no-console"): missing required field "files"`.
 
@@ -114,17 +177,17 @@ Required fields worth double-checking:
 
 Overriding a preset rule replaces it entirely. If you override a preset rule to change only its severity, copy the whole rule; to switch it off, use `{ "id": "preset/…", "disabled": true }`.
 
-### 4. `forbidden` on regex rules (warning)
+#### 4. `forbidden` on regex rules (warning)
 
 `"forbidden": true` still works as an alias of `"mustMatch": false`, with a deprecation warning. Replace it with `"mustMatch": false` (or just remove it, since that is the default). `"forbidden": true` together with `"mustMatch": true` is an error.
 
-### 5. Regex rules match `^` and `$` per line
+#### 5. Regex rules match `^` and `$` per line
 
 Regex rules now run with the `m` flag by default, so `^\s*export\s+default\b` finds a default export on any line, not only on line 1. This can surface **new violations** for forbidden patterns that use `^` or `$`.
 
 If a rule relied on `^` meaning "start of file" (typically a `mustMatch: true` header check), set `"flags": ""`. To keep per-line anchors and add other flags, include `m`: `"flags": "im"`. Also: a pattern that can match an empty string (for example `TODO|`) used to hang the check; it now only reports non-empty matches, and validation warns about it. Lookahead-only patterns such as `(?=console\.log)` (which also used to hang) now report normally.
 
-### 6. Excludes are merged with the defaults and follow `.gitignore` rules
+#### 6. Excludes are merged with the defaults and follow `.gitignore` rules
 
 - `node_modules` and `.git` (any depth) plus `/dist` and `/build` (project root) are always excluded. Your `exclude` no longer replaces them, so `"exclude": ["data"]` no longer makes Chaperone walk `node_modules`.
 - A slash-less pattern matches that name **at any depth**: `"exclude": ["dist"]` now also excludes `packages/x/dist`, and no longer excludes `distribution/` (a prefix match before). Anchor it with a slash to mean only the root: `"/dist"`.
@@ -133,13 +196,13 @@ If a rule relied on `^` meaning "start of file" (typically a `mustMatch: true` h
 
 Some rules may now see fewer files (things you excluded now really are excluded) or more files (brace globs in `files` that used to fail now match).
 
-### 7. Import boundaries and public APIs see aliased imports
+#### 7. Import boundaries and public APIs see aliased imports
 
 `import-boundary` and `public-api` used to look only at relative imports. They now resolve tsconfig `paths`/`baseUrl` aliases (`@/features/auth`), directory imports and `.js` specifiers, so violations hidden behind `@/…` imports **now surface**. Type-only imports (`import type`, `import { type X }`, `export type { X } from`, `typeof import("x")`) are recognised; import-boundary checks them by default (`includeTypeImports: true`), forbidden-import does not.
 
 If a boundary rule now floods with violations you cannot fix yet, lower its `severity` to `"warning"` while you migrate, or (temporarily) set `"integrations": { "useTypescriptPaths": false }` to stop resolving aliases. public-api no longer flags correct barrel imports such as `import { login } from "../features/auth"`; with a custom `barrelFile`, only that file counts as the public API (`index.*` is no longer accepted implicitly).
 
-### 8. Other behaviour you may notice
+#### 8. Other behaviour you may notice
 
 - **Tool runners fail closed.** A broken ESLint config (exit 2), `tsc` error TS18003 ("No inputs were found in config file") or a Prettier syntax error now fails the check with the tool's output. Unformatted files reported by Prettier 3 (on stderr) now appear as warnings. Fix the tool configuration, or set `rules.<tool>.enabled: false`.
 - **Rules that matched no files** are reported, and `PASSED` becomes `PASSED, but not everything was checked: …`. Check the glob for typos; the exit code is unchanged.
@@ -157,70 +220,105 @@ If a boundary rule now floods with violations you cannot fix yet, lower its `sev
 
 ## Upgrade checklist
 
-1. Install 0.8 and run `chaperone check --format json > /tmp/chaperone.json; echo $?`.
-2. Exit code 2: fix every listed error (removed types, severities, missing fields), then rerun.
-3. Read the configuration warnings (unknown fields, `forbidden`, empty-matching patterns) and fix them.
-4. Look at "matched no files" rules and skipped tools; fix globs, or accept them knowingly.
-5. Review new violations (regex `^`/`$`, aliased imports, component counts, symbol references). Fix the code, or adjust rules deliberately.
-6. Update CI scripts that relied on exit code 1 for configuration errors.
+1. Install 0.9.0 and update every pin in CI and scripts (the install script replaces the binary for every repository on the machine).
+2. Run `chaperone check --format json > /tmp/chaperone.json; echo $?`.
+3. Coming from 0.7.x and exit code 2: fix every listed configuration error (see [Coming from 0.7.x](#coming-from-07x-what-08-changed)), then rerun.
+4. Read the configuration warnings and the "matched no files" rules and skipped tools; fix them, or accept them knowingly.
+5. Fix new violations in the code (symbol-reference after 0.9; regex `^`/`$`, aliased imports, component counts and symbol references after 0.8).
+6. Replace scripts that are now config, with parity proven first (above).
 
 ## Prompt for AI agents
 
-Paste this into a coding agent working in a repository that uses Chaperone:
+Paste this into a coding agent working in any repository that uses Chaperone:
 
 ```text
-This repository uses Chaperone (a CLI that checks repo conventions from .chaperone.json).
-Chaperone 0.8 now validates its configuration and reports problems it used to hide.
-Upgrade Chaperone and our configuration so `chaperone check` runs cleanly and honestly.
-Do not delete rules or loosen them just to make the check pass.
+This repository uses Chaperone, a CLI that checks repo conventions from .chaperone.json.
+Upgrade it to 0.9.0, make `chaperone check` pass honestly, and then move checks that
+this repository runs as scripts into Chaperone's built-in rules. Work in this order.
 
-1. Upgrade Chaperone itself to 0.8.0 everywhere this repository pins it:
+Never: delete a rule, lower a severity, widen an exclude, raise a threshold or add an
+allowlist entry just to make the check pass; delete a script before proving the rule
+that replaces it finds the same things; edit generated files to silence a rule; or
+skip hooks (--no-verify).
+
+1. Upgrade Chaperone to 0.9.0 everywhere this repository pins it.
    - Find the pins: `grep -rn -i chaperone .github package.json scripts 2>/dev/null`.
-     Look for things like `CHAPERONE_VERSION: v0.7.1` in CI workflows or a version
-     constant in a download script, and set each one to 0.8.0 in the same format
-     (release URLs use the tag, `v0.8.0`).
-   - If `chaperone --version` on this machine is older than 0.8.0, install 0.8.0:
-     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.8.0 sh`
+     Look for things like `CHAPERONE_VERSION: v0.8.0` in CI workflows or a version
+     constant in a download script, and set each one to 0.9.0 in the same format
+     (release URLs use the tag, `v0.9.0`).
+   - If `chaperone --version` on this machine is older than 0.9.0, install it:
+     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.9.0 sh`
      The script verifies the checksum. It replaces the binary for every repository on
      this machine, so mention the upgrade in your summary.
-2. Run `chaperone --version` (must be 0.8.0 or later), then
-   `chaperone check --format json > /tmp/chaperone.json; echo "exit=$?"`.
-   Exit code 2 = the configuration is invalid (nothing was checked);
-   1 = real violations; 0 = passed.
-3. If the exit code is 2, read `.diagnostics` in /tmp/chaperone.json (or the stderr
-   output) and fix every error in .chaperone.json and in any local preset it extends:
-   - Rule types `relationship`, `file-naming`, `file-structure`, `file-suffix-content`
-     were removed. Rewrite them: companion files -> `file-pairing` with
-     `files`, `pair: { from, to }`, `mustExist`; content checks -> `file-contract` with
-     `requiredPatterns` / `forbiddenPatterns` / `assertions` (maxLines, mustImport,
-     mustNotImport). Keep the same `id` and intent.
-   - `severity` must be "error" or "warning".
-   - Add missing required fields named in the error (regex needs files, pattern,
-     message; component-location needs mustBeIn; import-boundary layers need files
-     and allowImportsFrom).
-   - An override of a preset rule replaces the whole rule: copy all its fields, or
-     use `{ "id": "...", "disabled": true }` to switch it off.
-4. Fix warnings: replace `"forbidden": true` with `"mustMatch": false` (or drop it),
-   fix unknown fields (follow the "did you mean" hint), and rewrite regex patterns
-   that can match an empty string.
-5. Regex rules now match ^ and $ per line (default flags "m"). For rules that relied
-   on ^ meaning "start of file" (usually mustMatch: true header checks), add
-   `"flags": ""`.
-6. Excludes are now merged with the defaults (node_modules, .git, /dist, /build) and
-   follow .gitignore rules: a bare name matches at any depth, a leading "/" anchors
-   to the project root, "!" re-includes. Remove entries that only repeated the
-   defaults, and check that nothing we want checked is excluded.
-7. Read `.gaps` in the JSON: everything that was not checked. Then look at
-   `.rules[] | select(.status == "no-files")` and `.runners[] |
-   select(.status != "passed")`. Fix globs that match nothing (usually typos or
-   moved directories); explain any tool that is skipped on purpose.
-8. Run `chaperone check --format ai` and fix the reported violations in the code.
-   import-boundary and public-api now resolve tsconfig aliases such as "@/...", so
-   boundary violations hidden behind aliases will appear: fix the imports, do not
-   weaken the layers. If a rule truly cannot be satisfied yet, set its severity to
-   "warning" and say so in your summary.
-9. Update scripts or CI steps that treated exit code 1 as "chaperone failed to run":
-   exit code 2 now means configuration/usage errors.
-10. Finish with `chaperone check` exiting 0 and report what you changed, which
-    warnings remain, and anything reported as skipped or "matched no files".
+   - Run `chaperone --version` (must say 0.9.0 or later).
+
+2. Fix whatever newly fails, honestly.
+   - Run `chaperone check --format json > /tmp/chaperone.json; echo "exit=$?"`.
+     Exit 2 = the configuration is invalid and nothing was checked; 1 = violations;
+     0 = passed.
+   - Exit 2 (usually coming from 0.7.x): read `.diagnostics` and fix every error in
+     .chaperone.json and in any local preset it extends. Removed rule types
+     (`relationship`, `file-naming`, `file-structure`, `file-suffix-content`) become
+     `file-pairing` (files, pair: { from, to }, mustExist) or `file-contract`
+     (requiredPatterns, forbiddenPatterns, assertions), keeping the same id and intent.
+     `severity` must be "error" or "warning". Add the missing fields the errors name.
+     An override of a preset rule replaces the whole rule.
+   - Fix the warnings: unknown fields (follow the "did you mean" hint), `"forbidden"`
+     (use "mustMatch"), regex patterns that can match an empty string.
+   - Read `.gaps`, `.rules[] | select(.status == "no-files")` and
+     `.runners[] | select(.status != "passed")`: fix globs that match nothing; explain
+     any tool that is skipped on purpose.
+   - Fix the violations in the code (`chaperone check --format ai`). After 0.9, a
+     symbol-reference rule may report an export that a test only names in a comment:
+     reference it for real (call it). After 0.8, regex rules match ^ and $ per line
+     (add "flags": "" where ^ meant the start of the file), excludes follow
+     .gitignore rules, and import rules resolve tsconfig aliases: fix the imports,
+     do not weaken the layers. If a rule truly cannot pass yet, set it to "warning"
+     and say so in your summary.
+   - Scripts or CI steps that treated exit code 1 as "chaperone failed to run" must
+     treat any non-zero code as failure (2 = configuration or usage error).
+
+3. Search for checks that are now config. Look in scripts/ (and tools/, bin/), in CI
+   workflows, in package.json scripts, in git hooks, and in .chaperone.json `command`
+   rules. Candidates:
+   - copied code: `.jscpd.json`, a jscpd dependency, a guard around it;
+   - repeated class strings, or any "the third copy of a string fails" script;
+   - doc comments broken by merges: a script looking for `*` lines outside comments,
+     or a `/*` inside a comment;
+   - duplicate migration or sequence numbers: a script that checks a folder of
+     numbered files.
+   For each, read the script and write down exactly what it checks, its files, its
+   limits and its allowlist.
+
+4. Replace each with a built-in rule, and prove parity before deleting the script:
+   - copied code -> `duplicate-code` (files, exclude, minTokens, minLines, allow);
+   - repeated strings -> `repeated-literal` (files, literalPattern, minTokens,
+     contextPattern, contextFiles, ignoreOrder, maxOccurrences, allow);
+   - broken comments -> `comment-integrity` (files);
+   - duplicate numbers -> `unique-capture` (files, capture: { pattern, group, source }).
+   Read their documentation in Chaperone's README (Custom Rule Types) and MIGRATION.md.
+   Run the script and the rule on the current tree: they must report the same files,
+   lines and groups, or you must explain each difference from the documentation.
+   Then break a scratch copy of the tree on purpose (paste a block of code into a
+   second file, add a third copy of a string, delete a doc comment's opener, give two
+   files the same number) and run both again: both must report each break. Throw the
+   scratch copy away. If the rule covers only part of the script (a migrations script
+   that also checks a journal), replace only that part and keep the rest.
+   Delete the script, its `command` rule and any dependency only it used, only after
+   parity holds.
+
+5. Every exception needs a reason. Carry the script's allowlist over to the rule's
+   `allow`, entry by entry, each with a "reason" that says why the copy is kept. Do not
+   add entries for things the script did not allow. An entry the rule reports as no
+   longer needed is stale: remove it.
+
+6. If this repository has canaries (fixtures that break each check on purpose, so a
+   check that stops firing is noticed), add one per new rule, following how the
+   existing canaries are written, and make sure each one fires.
+
+7. Finish with `chaperone check` exiting 0, and summarise: the version change and the
+   pins you updated, what newly failed and how you fixed it, each script you replaced
+   (with the parity evidence: what both reported, on the tree and on the break), each
+   script you kept or kept in part and why, any allow entries and their reasons, and
+   anything still reported as skipped or "matched no files".
 ```
