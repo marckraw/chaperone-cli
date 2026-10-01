@@ -99,8 +99,32 @@ describe("runCommentIntegrityRule", () => {
     });
     const result = await runCommentIntegrityRule(RULE, { cwd, include: [], exclude: [] });
     expect(result.filesChecked).toBe(2);
-    expect(result.results.map(({ file, line, rule }) => ({ file, line, rule }))).toEqual([
-      { file: "src/broken.ts", line: 2, rule: "comment-integrity/comments" },
+    expect(result.results.map(({ file, line, rule, message }) => ({ file, line, rule, message }))).toEqual([
+      {
+        file: "src/broken.ts",
+        line: 2,
+        rule: "comment-integrity/comments",
+        message: "A comment's line with no comment open: a merge may have dropped the /** above it",
+      },
     ]);
+  });
+
+  test("a comment opened inside another lists both lines, and a custom message comes first", async () => {
+    const RULE: CommentIntegrityRule = {
+      type: "comment-integrity",
+      id: "comments",
+      severity: "error",
+      files: "src/**/*.ts",
+      message: "A merge broke a comment",
+    };
+    const cwd = makeProject({
+      "src/a.ts": "/**\n * First.\n\nexport const a = 1;\n/**\n * Second.\n */\nexport const b = 2;\n",
+    });
+    const [problem] = (await runCommentIntegrityRule(RULE, { cwd, include: [], exclude: [] })).results;
+    expect(problem).toMatchObject({ file: "src/a.ts", line: 5 });
+    expect(problem!.message).toBe(
+      "A merge broke a comment (a comment opens inside the comment from line 1: a merge may have dropped that one's */)"
+    );
+    expect(problem!.context?.locations).toEqual(["src/a.ts:1", "src/a.ts:5"]);
   });
 });

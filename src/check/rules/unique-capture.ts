@@ -10,6 +10,7 @@
 import { basename } from "node:path";
 import type { CheckResult, UniqueCaptureRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { findingMessage } from "./utils/findings";
 import { getRuleContext } from "./utils/rule-context";
 
 /** The files sharing each key: only keys with more than one file, in path order. */
@@ -41,20 +42,24 @@ export async function runUniqueCaptureRule(
   const inScope = new Set(context.inScope(files));
   const results: CheckResult[] = [];
 
+  // Each shared key is reported once, at its first file, with every file that shares it.
+  // Under --since, a key is reported when one of its files changed.
   for (const [key, sharing] of findDuplicateCaptures(files, rule.capture)) {
-    for (const file of sharing) {
-      if (!inScope.has(file)) continue;
-      const others = sharing.filter((other) => other !== file);
-      const detail = `"${key}" is also taken by ${others.join(", ")}`;
-      results.push({
-        file,
-        rule: `unique-capture/${rule.id}`,
-        message: rule.message ? `${rule.message} (${detail})` : `Duplicate key: ${detail}`,
-        severity: rule.severity,
-        source: "custom",
-        context: { matchedText: key },
-      });
-    }
+    if (!sharing.some((file) => inScope.has(file))) continue;
+    results.push({
+      file: sharing[0]!,
+      rule: `unique-capture/${rule.id}`,
+      message: findingMessage(rule.message, `${sharing.length} files share the key "${key}"`),
+      severity: rule.severity,
+      source: "custom",
+      suggestion: "Give all but one of the files a key of their own (a numbered migration: generate it again after the other branch's)",
+      context: {
+        matchedText: key,
+        expectedValue: "one file per key",
+        actualValue: `${sharing.length} files`,
+        locations: sharing,
+      },
+    });
   }
 
   return { ruleId: rule.id, results, filesChecked: files.length };

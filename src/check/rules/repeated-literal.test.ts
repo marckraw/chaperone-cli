@@ -40,9 +40,16 @@ describe("runRepeatedLiteralRule", () => {
     expect(result.results).toHaveLength(1);
     const [found] = result.results;
     expect(found).toMatchObject({ file: "src/a.tsx", line: 1, rule: "repeated-literal/classes", severity: "error" });
-    expect(found!.message).toBe('"flex items-center gap-2 px-4" appears 3 times; at most 2 allowed');
+    expect(found!.message).toBe('"flex items-center gap-2 px-4" appears 3 times, at most 2 allowed');
     expect(found!.context?.locations).toEqual(["src/a.tsx:1:42", "src/b.tsx:1:42", "src/c.tsx:2:16"]);
     expect(result.filesChecked).toBe(3);
+  });
+
+  test("a custom message comes first, with the literal in parentheses", async () => {
+    const files = { "src/a.ts": 'export const a = ["a b c d", "a b c d", "a b c d"];\n' };
+    expect((await run(files, { message: "Extract it" })).results[0]!.message).toBe(
+      'Extract it ("a b c d" appears 3 times, at most 2 allowed)'
+    );
   });
 
   test("two copies pass, and maxOccurrences moves the limit", async () => {

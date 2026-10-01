@@ -2,6 +2,7 @@ import { compileGlob } from "../../utils/glob";
 import type { CheckResult, DuplicateCodeRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { findClones, type Clone, type CloneLocation } from "./utils/clones";
+import { findingMessage } from "./utils/findings";
 import { CHAPERONE_IGNORE, JSCPD_IGNORE } from "./utils/ignore-regions";
 import { getRuleContext } from "./utils/rule-context";
 
@@ -64,9 +65,10 @@ export async function runDuplicateCodeRule(rule: DuplicateCodeRule, options: Rul
       file: clone.second.file,
       line: clone.second.startLine,
       rule: ruleName,
-      message:
-        rule.message ??
-        `Lines ${clone.second.startLine}-${clone.second.endLine} repeat ${place(clone.first)} (${clone.tokens} tokens)`,
+      message: findingMessage(
+        rule.message,
+        `lines ${clone.second.startLine}-${clone.second.endLine} repeat ${place(clone.first)}, ${clone.tokens} tokens`
+      ),
       severity: rule.severity,
       source: "custom",
       suggestion:

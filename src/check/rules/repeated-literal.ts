@@ -2,6 +2,7 @@ import { compileGlob } from "../../utils/glob";
 import { createLineIndex, matchesEmptyString, truncate, type LineIndex } from "../../utils/text";
 import type { CheckResult, RepeatedLiteralRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { findingMessage } from "./utils/findings";
 import { findLiterals, literalKey, normalizeLiteral } from "./utils/literals";
 import { getRuleContext } from "./utils/rule-context";
 
@@ -138,9 +139,7 @@ export async function runRepeatedLiteralRule(
       line: first.line,
       column: first.column,
       rule: ruleName,
-      message:
-        rule.message ??
-        `"${shown}" appears ${places.length} times; at most ${maxOccurrences} allowed`,
+      message: findingMessage(rule.message, `"${shown}" appears ${places.length} times, at most ${maxOccurrences} allowed`),
       severity: rule.severity,
       source: "custom",
       suggestion:

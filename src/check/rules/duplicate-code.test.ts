@@ -67,9 +67,14 @@ describe("runDuplicateCodeRule", () => {
     const [copy] = result.results;
     // Files are read in path order: errors.tsx comes first, so issues.tsx holds the copy
     expect(copy).toMatchObject({ file: "src/issues.tsx", line: 3, rule: "duplicate-code/copies", severity: "error" });
-    expect(copy!.message).toBe("Lines 3-23 repeat src/errors.tsx:3-23 (145 tokens)");
+    expect(copy!.message).toBe("Lines 3-23 repeat src/errors.tsx:3-23, 145 tokens");
     expect(copy!.context?.locations).toEqual(["src/errors.tsx:3-23", "src/issues.tsx:3-23"]);
     expect(result.filesChecked).toBe(2);
+  });
+
+  test("a custom message comes first, with the copy in parentheses", async () => {
+    const result = await run({ "src/a.ts": stats("a"), "src/b.ts": stats("b") }, { message: "Copied code: share it" });
+    expect(result.results[0]!.message).toBe("Copied code: share it (lines 1-7 repeat src/a.ts:1-7, 77 tokens)");
   });
 
   test("blocks under minTokens or minLines are not copies", async () => {
@@ -179,7 +184,7 @@ describe("duplicate-code allow list", () => {
       ],
     });
     expect(result.results.map((entry) => [entry.file, entry.message])).toEqual([
-      ["src/c.ts", "Lines 1-7 repeat src/a.ts:1-7 (77 tokens)"],
+      ["src/c.ts", "Lines 1-7 repeat src/a.ts:1-7, 77 tokens"],
       [".chaperone.json", "allow entry for src/b.ts and src/c.ts no longer matches a copy. Remove it from the allow list."],
     ]);
   });

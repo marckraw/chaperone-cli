@@ -13,11 +13,14 @@ import type { CheckResult, CommentIntegrityRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { type Comment, jsxEnabledFor, tokenize } from "../../utils/js-lexer";
 import { createLineIndex } from "../../utils/text";
+import { findingMessage } from "./utils/findings";
 import { getRuleContext } from "./utils/rule-context";
 
 export interface CommentProblem {
   line: number;
   message: string;
+  /** A comment that opens inside another: the line where the outer one opened */
+  openedAt?: number;
 }
 
 /** A line that reads like a comment's middle or end: `* text`, `*`, or `*\/`. */
@@ -48,9 +51,11 @@ export function findCommentProblems(content: string, filePath: string): CommentP
     while (offset !== -1) {
       const rest = text.slice(offset + 1);
       if (/^[ \t]*\/\*/.test(rest)) {
+        const openedAt = lines.lineAt(comment.start);
         problems.push({
           line: lines.lineAt(comment.start + offset + 1),
-          message: `a comment opens inside the comment from line ${lines.lineAt(comment.start)}: a merge may have dropped that one's */`,
+          message: `a comment opens inside the comment from line ${openedAt}: a merge may have dropped that one's */`,
+          openedAt,
         });
       }
       offset = text.indexOf("\n", offset + 1);
@@ -116,10 +121,13 @@ export async function runCommentIntegrityRule(
         file,
         line: problem.line,
         rule: `comment-integrity/${rule.id}`,
-        message: rule.message ? `${rule.message} (${problem.message})` : problem.message,
+        message: findingMessage(rule.message, problem.message),
         severity: rule.severity,
         source: "custom",
         suggestion: "Compare the comment with both sides of the merge and restore the lost /** or */",
+        ...(problem.openedAt === undefined
+          ? {}
+          : { context: { locations: [`${file}:${problem.openedAt}`, `${file}:${problem.line}`] } }),
       });
     }
   }

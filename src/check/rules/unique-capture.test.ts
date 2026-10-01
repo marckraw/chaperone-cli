@@ -3,6 +3,7 @@ import { cleanupProjects, makeProject } from "../../testing/fixtures";
 import { validateRule } from "../config-schema";
 import type { UniqueCaptureRule } from "../types";
 import { findDuplicateCaptures, runUniqueCaptureRule } from "./unique-capture";
+import { createRuleContext } from "./utils/rule-context";
 
 afterEach(cleanupProjects);
 
@@ -34,24 +35,44 @@ describe("findDuplicateCaptures", () => {
 });
 
 describe("runUniqueCaptureRule", () => {
-  test("reports every file that shares a key, naming the others", async () => {
+  test("reports each shared key once, at its first file, with every file that shares it", async () => {
     const cwd = makeProject({
       "packages/db/drizzle/0015_mentions.sql": "",
       "packages/db/drizzle/0016_meet.sql": "",
       "packages/db/drizzle/0016_files.sql": "",
+      "packages/db/drizzle/0017_a.sql": "",
+      "packages/db/drizzle/0017_b.sql": "",
+      "packages/db/drizzle/0017_c.sql": "",
     });
     const result = await runUniqueCaptureRule(MIGRATIONS, { cwd, include: [], exclude: [] });
-    expect(result.filesChecked).toBe(3);
-    expect(result.results.map(({ file, message }) => ({ file, message }))).toEqual([
+    expect(result.filesChecked).toBe(6);
+    expect(result.results.map(({ file, message, context }) => ({ file, message, locations: context?.locations }))).toEqual([
       {
         file: "packages/db/drizzle/0016_files.sql",
-        message: `${MIGRATIONS.message} ("0016" is also taken by packages/db/drizzle/0016_meet.sql)`,
+        message: `${MIGRATIONS.message} (2 files share the key "0016")`,
+        locations: ["packages/db/drizzle/0016_files.sql", "packages/db/drizzle/0016_meet.sql"],
       },
       {
-        file: "packages/db/drizzle/0016_meet.sql",
-        message: `${MIGRATIONS.message} ("0016" is also taken by packages/db/drizzle/0016_files.sql)`,
+        file: "packages/db/drizzle/0017_a.sql",
+        message: `${MIGRATIONS.message} (3 files share the key "0017")`,
+        locations: ["packages/db/drizzle/0017_a.sql", "packages/db/drizzle/0017_b.sql", "packages/db/drizzle/0017_c.sql"],
       },
     ]);
+    const { message: _message, ...plain } = MIGRATIONS;
+    const without = await runUniqueCaptureRule(plain, { cwd, include: [], exclude: [] });
+    expect(without.results[0]!.message).toBe('2 files share the key "0016"');
+  });
+
+  test("under --since, reports a key when one of its files changed", async () => {
+    const cwd = makeProject({
+      "packages/db/drizzle/0016_meet.sql": "",
+      "packages/db/drizzle/0016_files.sql": "",
+      "packages/db/drizzle/0017_a.sql": "",
+      "packages/db/drizzle/0017_b.sql": "",
+    });
+    const context = createRuleContext(cwd, [], { changedFiles: new Set(["packages/db/drizzle/0017_b.sql"]) });
+    const result = await runUniqueCaptureRule(MIGRATIONS, { cwd, include: [], exclude: [], context });
+    expect(result.results.map((entry) => entry.context?.matchedText)).toEqual(["0017"]);
   });
 
   test("passes a folder where every key is its own", async () => {
