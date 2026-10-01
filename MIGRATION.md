@@ -1,3 +1,44 @@
+# Moving copy checks into Chaperone
+
+Nothing here is required: every 0.8 config keeps working. Two rule types do what projects used to script or run jscpd for, so the check becomes a few lines of config, runs in the same pass as the other rules, and needs no dependency.
+
+## From jscpd to `duplicate-code`
+
+| `.jscpd.json` | `duplicate-code` rule |
+|---------------|-----------------------|
+| `path` + `pattern` (+ `format`) | `files`: one glob, e.g. `"{apps/*/src,packages/ui/src}/**/*.{ts,tsx}"` |
+| `ignore` | `exclude` (`.gitignore`-style, merged with the global `exclude`) |
+| `minTokens` | `minTokens` (default 100 instead of jscpd's 50). Tokens are counted the way jscpd 5 counts them, so keep your value. |
+| `minLines` | `minLines` (default 5, as in jscpd) |
+| a wrapper script's allowlist | `allow: [{ "files": ["a", "b"], "reason": "..." }]`; an entry that no longer matches a copy is reported |
+| `// jscpd:ignore-start` ... `// jscpd:ignore-end` | keep them, or write `chaperone-ignore-start` / `chaperone-ignore-end` |
+| `threshold` | no equivalent: every copy outside `allow` fails already |
+| `mode`, `reporters`, `output`, `exitCode` | not needed: comments are always dropped, and Chaperone reports and exits |
+
+Expect the same copies (on one 1,200-file TypeScript project, the same pairs, line ranges and token counts). The known differences each find more: a copy between a `.ts` and a `.tsx` file counts, re-indented JSX is still a copy, and a copy spanning exactly `minLines` lines counts (jscpd 5 wants one more). A copy's last line is the line of its last token, where jscpd sometimes reports the next one.
+
+## From a class-string script to `repeated-literal`
+
+A script that counts copies of class strings in `className`, `cn(...)` and `cva(...)`:
+
+```json
+{
+  "id": "repeated-classes",
+  "type": "repeated-literal",
+  "severity": "error",
+  "files": "{apps,packages}/*/src/**/*.{ts,tsx}",
+  "exclude": ["**/*.test.{ts,tsx}", "**/*.stories.tsx"],
+  "contextPattern": "\\bclassName\\s*=|(?:^|[^\\w$.])(?:cn|cva)\\s*\\(",
+  "contextFiles": ["**/*.styles.ts"],
+  "ignoreOrder": true,
+  "minTokens": 4,
+  "maxOccurrences": 2,
+  "allow": [{ "literal": "flex h-full min-h-0 flex-col", "reason": "A column that fills its pane: layout, not a look" }]
+}
+```
+
+`attributes` and `functions` become one `contextPattern` (an attribute name followed by `=`, a function name followed by `(`), class files become `contextFiles`, "the same utilities in any order" is `ignoreOrder`, and `allowlist: [{ classes, reason }]` becomes `allow: [{ literal, reason }]`. Then delete the script and its `command` rule.
+
 # Migrating to Chaperone 0.8
 
 Chaperone 0.8 is a "trust first" release. Until 0.7 a lot could go wrong silently: an invalid rule was skipped, a crashed tool counted as a pass, a glob that matched nothing passed, and `--format json` started with terminal escape codes. 0.8 makes all of that loud. Most configs keep working, but some will now fail, and some will find violations that were always there.
