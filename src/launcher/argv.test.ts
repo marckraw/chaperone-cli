@@ -24,6 +24,24 @@ describe("scanArgs", () => {
     expect(scanArgs(["--cwd"])).toEqual({ command: "--cwd", jsonOutput: false });
     expect(scanArgs(["check", "--since", "main"])).toEqual({ command: "check", jsonOutput: false });
   });
+
+  test("reads each command's own options: -f is --force in init, not --format", () => {
+    expect(scanArgs(["init", "-f", "--cwd", "packages/a"])).toEqual({ command: "init", cwd: "packages/a", jsonOutput: false });
+    expect(scanArgs(["init", "--force", "--cwd=packages/a"])).toEqual({ command: "init", cwd: "packages/a", jsonOutput: false });
+    expect(scanArgs(["analyze", "--api-key", "test-key", "--cwd", "pkg"])).toEqual({
+      command: "analyze",
+      cwd: "pkg",
+      jsonOutput: false,
+    });
+    expect(scanArgs(["analyze", "-v", "--config", "ci.json"])).toEqual({ command: "analyze", config: "ci.json", jsonOutput: false });
+  });
+
+  test("never takes a value that starts with -, as the commands' parser does", () => {
+    expect(scanArgs(["check", "--since", "--cwd", "pkg"])).toEqual({ command: "check", cwd: "pkg", jsonOutput: false });
+    expect(scanArgs(["check", "--format", "--cwd", "pkg"])).toEqual({ command: "check", cwd: "pkg", jsonOutput: false });
+    expect(scanArgs(["check", "-c", "--cwd", "pkg"])).toEqual({ command: "check", cwd: "pkg", jsonOutput: false });
+    expect(scanArgs(["check", "--cwd", "-"])).toEqual({ command: "check", cwd: "-", jsonOutput: false });
+  });
 });
 
 describe("resolveConfigPath", () => {

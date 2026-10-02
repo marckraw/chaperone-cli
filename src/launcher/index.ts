@@ -21,7 +21,7 @@ import { LaunchError } from "./errors";
 import { formatMarker, isOwnMarker, LAUNCH_MARKER, parseMarker } from "./marker";
 import type { PinState } from "./pin";
 import { isTruthyEnv, planLaunch } from "./plan";
-import { execBinary, exitLikeChild, launchMode, spawnBinary } from "./run-binary";
+import { execBinary, exitLikeChild, launchMode, spawnBinary, whyNotRunnable } from "./run-binary";
 
 export { PIN_FIELD, checkPinValue, isMisspelledPinKey, misspelledPinKeyMessage, formatPinHint, shouldShowPinHint } from "./pin";
 export type { PinState } from "./pin";
@@ -91,6 +91,16 @@ export async function runLauncher(args: string[]): Promise<LauncherOutcome> {
     throw error;
   }
 
+  const unrunnable = whyNotRunnable(binary);
+  if (unrunnable) {
+    return fail(
+      `cannot run Chaperone ${plan.version} (${binary}): ${unrunnable}. If the cache is on a filesystem mounted ` +
+        "noexec, set CHAPERONE_CACHE_DIR to a directory that allows running programs; otherwise remove it with " +
+        `"chaperone cache clear ${plan.version}" and run again to download it afresh. Nothing ran.`,
+      scanned
+    );
+  }
+
   const mode = launchMode();
   const env: Record<string, string | undefined> = {
     ...process.env,
@@ -104,10 +114,11 @@ export async function runLauncher(args: string[]): Promise<LauncherOutcome> {
     try {
       execBinary(binary, args, env);
     } catch (error) {
+      // Bun aborts when execve fails (hence the check above); a runtime that throws ends up here.
       const reason = error instanceof Error ? error.message : String(error);
       return fail(
         `cannot run Chaperone ${plan.version} (${binary}): ${reason}. ` +
-          `Remove it with "chaperone cache clear ${plan.version}" and run again to download it afresh.`,
+          `Remove it with "chaperone cache clear ${plan.version}" and run again to download it afresh. Nothing ran.`,
         scanned
       );
     }
@@ -117,6 +128,6 @@ export async function runLauncher(args: string[]): Promise<LauncherOutcome> {
     return { kind: "exit", code: exitLikeChild(await spawnBinary(binary, args, env)) };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return fail(`cannot run Chaperone ${plan.version} (${binary}): ${reason}`, scanned);
+    return fail(`cannot run Chaperone ${plan.version} (${binary}): ${reason}. Nothing ran.`, scanned);
   }
 }

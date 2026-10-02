@@ -3,12 +3,13 @@
  * downloads anything from GitHub.
  *
  * A fake binary is a shell script that execs a small Bun program (keeping the pid, as a real
- * binary would). The program prints one JSON line describing how it was started, then exits with
- * FAKE_EXIT, kills itself with SIGTERM (FAKE_MODE=kill-self) or waits (FAKE_MODE=sleep).
+ * binary would). The program prints one JSON line describing how it was started (unless
+ * FAKE_SILENT is set), then exits with FAKE_EXIT, kills itself with SIGTERM (FAKE_MODE=kill-self),
+ * or waits (FAKE_MODE=sleep), for FAKE_SLEEP_MS before exiting with FAKE_EXIT if that is set.
  */
 
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { releaseAsset } from "../launcher/paths";
 import { makeProject } from "./fixtures";
@@ -43,6 +44,9 @@ if (mode === "kill-self") {
   setInterval(() => {}, 1000);
 } else if (mode === "sleep") {
   setInterval(() => {}, 1000);
+  if (process.env.FAKE_SLEEP_MS) {
+    setTimeout(() => process.exit(Number(process.env.FAKE_EXIT ?? "0")), Number(process.env.FAKE_SLEEP_MS));
+  }
 } else {
   process.exit(Number(process.env.FAKE_EXIT ?? "0"));
 }
@@ -149,3 +153,98 @@ export function startReleaseServer(
 export function offlineUrl(): string {
   return "http://127.0.0.1:1";
 }
+
+/** A project, with a cache and a home of its own. */
+export interface Sandbox {
+  project: string;
+  cache: string;
+  home: string;
+}
+
+/** A project pinning `pin` (or nothing), with an empty cache and home of its own. */
+export function sandbox(pin: string | null = "0.8.0", extra: Record<string, unknown> = {}): Sandbox {
+  const config = { ...(pin === null ? {} : { chaperoneVersion: pin }), version: "1.0.0", rules: { custom: [] }, ...extra };
+  return {
+    project: makeProject({ ".chaperone.json": `${JSON.stringify(config, null, 2)}\n` }),
+    cache: makeProject(),
+    home: makeProject(),
+  };
+}
+
+export interface Run {
+  exitCode: number | null;
+  signalCode: string | null;
+  pid: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface RunOptions {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  /** Called with the process once it has printed its first line on stdout */
+  onFirstLine?: (process: ReturnType<typeof Bun.spawn>) => void;
+  /** Kill the run after this long (default 10 s), so a regression cannot leave it running */
+  killAfterMs?: number;
+}
+
+/**
+ * Run a chaperone (`command`: this checkout's launcher, or a compiled binary) in a sandbox:
+ * HOME and the cache are the sandbox's, releases come from `url`, the update check is off, and no
+ * CHAPERONE_* or FAKE_* variable leaks in from the test's own environment.
+ */
+export async function runChaperone(
+  command: readonly string[],
+  box: Sandbox,
+  url: string,
+  args: string[],
+  options: RunOptions = {}
+): Promise<Run> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("CHAPERONE_") && !key.startsWith("FAKE_") && key !== "XDG_CACHE_HOME") env[key] = value;
+  }
+  Object.assign(env, {
+    HOME: box.home,
+    CHAPERONE_CACHE_DIR: box.cache,
+    CHAPERONE_RELEASES_URL: url,
+    CHAPERONE_NO_UPDATE_CHECK: "1",
+    NO_COLOR: "",
+    FORCE_COLOR: "",
+    ...options.env,
+  });
+
+  const child = Bun.spawn([...command, ...args], {
+    cwd: options.cwd ?? box.project,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const deadline = setTimeout(() => child.kill("SIGKILL"), options.killAfterMs ?? 10_000);
+
+  const readStdout = async () => {
+    let text = "";
+    let notified = false;
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stdout) {
+      text += decoder.decode(chunk, { stream: true });
+      if (!notified && text.includes("\n") && options.onFirstLine) {
+        notified = true;
+        options.onFirstLine(child);
+      }
+    }
+    return text;
+  };
+  const [stdout, stderr] = await Promise.all([readStdout(), new Response(child.stderr).text()]);
+  await child.exited;
+  clearTimeout(deadline);
+  return { exitCode: child.exitCode, signalCode: child.signalCode, pid: child.pid, stdout, stderr };
+}
+
+/** The fake binary's report: the first line it printed. */
+export const report = (run: Run): FakeReport => JSON.parse(run.stdout.trim().split("\n")[0]!);
+
+/** The files in a sandbox cache's directory for `version`. */
+export const cachedFiles = (box: Sandbox, version: string): string[] =>
+  existsSync(join(box.cache, version)) ? readdirSync(join(box.cache, version)).sort() : [];

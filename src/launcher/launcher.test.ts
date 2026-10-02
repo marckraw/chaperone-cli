@@ -6,18 +6,24 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../testing/fixtures";
 import {
   ASSET,
+  cachedFiles,
   fakeBinary,
   installIntoCache,
   launcherBinary,
   offlineUrl,
+  report,
+  runChaperone,
+  sandbox,
   startReleaseServer,
-  type FakeReport,
   type ReleaseServer,
+  type Run,
+  type RunOptions,
+  type Sandbox,
 } from "../testing/fake-releases";
 import { VERSION } from "../version";
 
@@ -38,85 +44,10 @@ function serve(...args: Parameters<typeof startReleaseServer>): ReleaseServer {
   return server;
 }
 
-interface Sandbox {
-  project: string;
-  cache: string;
-  home: string;
+/** Run this checkout's launcher (`bun src/cli.ts`) as the installed chaperone. */
+function chaperone(box: Sandbox, url: string, args: string[], options: RunOptions = {}): Promise<Run> {
+  return runChaperone([process.execPath, CLI], box, url, args, options);
 }
-
-/** A project pinning `pin` (or nothing), with an empty cache and home of its own. */
-function sandbox(pin: string | null = "0.8.0", extra: Record<string, unknown> = {}): Sandbox {
-  const config = { ...(pin === null ? {} : { chaperoneVersion: pin }), version: "1.0.0", rules: { custom: [] }, ...extra };
-  return {
-    project: makeProject({ ".chaperone.json": `${JSON.stringify(config, null, 2)}\n` }),
-    cache: makeProject(),
-    home: makeProject(),
-  };
-}
-
-interface Run {
-  exitCode: number | null;
-  signalCode: string | null;
-  pid: number;
-  stdout: string;
-  stderr: string;
-}
-
-interface RunOptions {
-  cwd?: string;
-  env?: Record<string, string | undefined>;
-  /** Called with the process once it has printed its first line on stdout */
-  onFirstLine?: (process: ReturnType<typeof Bun.spawn>) => void;
-  /** Kill the run after this long (default 10 s), so a regression cannot leave it running */
-  killAfterMs?: number;
-}
-
-async function chaperone(box: Sandbox, url: string, args: string[], options: RunOptions = {}): Promise<Run> {
-  const env: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("CHAPERONE_") && !key.startsWith("FAKE_") && key !== "XDG_CACHE_HOME") env[key] = value;
-  }
-  Object.assign(env, {
-    HOME: box.home,
-    CHAPERONE_CACHE_DIR: box.cache,
-    CHAPERONE_RELEASES_URL: url,
-    CHAPERONE_NO_UPDATE_CHECK: "1",
-    NO_COLOR: "",
-    FORCE_COLOR: "",
-    ...options.env,
-  }, SLOW);
-
-  const child = Bun.spawn([process.execPath, CLI, ...args], {
-    cwd: options.cwd ?? box.project,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const deadline = setTimeout(() => child.kill("SIGKILL"), options.killAfterMs ?? 10_000);
-
-  const readStdout = async () => {
-    let text = "";
-    let notified = false;
-    const decoder = new TextDecoder();
-    for await (const chunk of child.stdout) {
-      text += decoder.decode(chunk, { stream: true });
-      if (!notified && text.includes("\n") && options.onFirstLine) {
-        notified = true;
-        options.onFirstLine(child);
-      }
-    }
-    return text;
-  };
-  const [stdout, stderr] = await Promise.all([readStdout(), new Response(child.stderr).text()]);
-  await child.exited;
-  clearTimeout(deadline);
-  return { exitCode: child.exitCode, signalCode: child.signalCode, pid: child.pid, stdout, stderr };
-}
-
-const report = (run: Run): FakeReport => JSON.parse(run.stdout.trim().split("\n")[0]!);
-const cachedFiles = (box: Sandbox, version: string) =>
-  existsSync(join(box.cache, version)) ? readdirSync(join(box.cache, version)).sort() : [];
 
 describe("launching a pinned version", () => {
   posixTest("downloads, verifies and caches it, then runs it with the same arguments", async () => {
@@ -210,6 +141,19 @@ describe("launching a pinned version", () => {
     expect(JSON.parse(unpinned.stdout).success).toBe(true);
   }, SLOW);
 
+  posixTest("reads each command's own options: init -f is --force, so --cwd still counts", async () => {
+    // The root pins 0.8.0 and the package 0.7.1: `init -f --cwd packages/a` must run 0.7.1.
+    const box = sandbox("0.8.0");
+    const pkg = join(box.project, "packages", "a");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, ".chaperone.json"), JSON.stringify({ chaperoneVersion: "0.7.1" }));
+    installIntoCache(box.cache, "0.8.0", fakeBinary("0.8.0"));
+    installIntoCache(box.cache, "0.7.1", fakeBinary("0.7.1"));
+
+    const run = await chaperone(box, offlineUrl(), ["init", "-f", "--cwd", "packages/a"]);
+    expect(report(run)).toMatchObject({ label: "0.7.1", argv: ["init", "-f", "--cwd", "packages/a"] });
+  }, SLOW);
+
   posixTest("two runs at once both succeed and leave one verified binary", async () => {
     const box = sandbox("0.8.0");
     const server = serve({ "0.8.0": { binary: fakeBinary("0.8.0") } }, { holdBinariesUntil: 2 });
@@ -279,6 +223,17 @@ describe("when the pinned version cannot be installed", () => {
     const json = JSON.parse(run.stdout);
     expect(json).toMatchObject({ success: false, error: "pinned-version-unavailable", exitCode: 2 });
     expect(json.message).toContain("never falls back to another version");
+  }, SLOW);
+
+  posixTest("a cached binary that cannot be run fails with exit code 2 and says why (Bun would abort)", async () => {
+    // As on a cache mounted noexec: execve would fail, and Bun aborts on that (exit code 134).
+    const box = sandbox("0.8.0");
+    chmodSync(installIntoCache(box.cache, "0.8.0", fakeBinary("0.8.0")), 0o644);
+    const run = await chaperone(box, offlineUrl(), ["check", "--format", "json"]);
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr).toContain("cannot run Chaperone 0.8.0");
+    expect(run.stderr).toContain("noexec");
+    expect(JSON.parse(run.stdout).error).toBe("pinned-version-unavailable");
   }, SLOW);
 });
 

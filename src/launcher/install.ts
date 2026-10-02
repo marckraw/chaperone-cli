@@ -192,10 +192,19 @@ export async function installRelease(options: InstallOptions): Promise<string> {
     const handle = fd;
     await download(assetUrl, stallTimeoutMs, (chunk) => {
       hash.update(chunk);
-      writeAll(handle, chunk);
+      try {
+        writeAll(handle, chunk);
+      } catch (error) {
+        // A full disk is not a network problem: say so, rather than "run again once it is reachable".
+        throw new LaunchError(`cannot write the download to ${directory}: ${describe(error)}`);
+      }
       bytes += chunk.length;
     });
-    fsyncSync(handle);
+    try {
+      fsyncSync(handle);
+    } catch (error) {
+      throw new LaunchError(`cannot write the download to ${directory}: ${describe(error)}`);
+    }
     closeSync(handle);
     fd = null;
 

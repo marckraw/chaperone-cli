@@ -17,32 +17,47 @@ export interface LauncherArgs {
   jsonOutput: boolean;
 }
 
-const takesValue = (arg: string, ...names: string[]) => names.includes(arg);
+/**
+ * The options that take a value, per command, as each command's parser defines them. A flag means
+ * different things in different commands (`-f` is `--format` in `check` and `--force` in `init`),
+ * so reading another command's table would take the wrong value.
+ */
+const VALUE_OPTIONS: Readonly<Record<string, readonly string[]>> = {
+  check: ["--config", "-c", "--cwd", "--format", "-f", "--since"],
+  analyze: ["--config", "-c", "--cwd", "--api-key"],
+  init: ["--cwd"],
+};
+const DEFAULT_VALUE_OPTIONS: readonly string[] = ["--config", "-c", "--cwd"];
 
 /**
- * Find the options that locate the config, the same way `check` and `analyze` read them:
- * `--cwd <path>`, `--config <path>`, `-c <path>`, and the `--name=value` forms.
+ * Find the options that locate the config, the same way the command's own parser reads them
+ * (src/utils/args.ts): `--cwd <path>`, `--config <path>`, `-c <path>`, the `--name=value` forms,
+ * and never a value that starts with "-" (the parser rejects that as a missing value).
  */
 export function scanArgs(args: readonly string[]): LauncherArgs {
   const result: LauncherArgs = { command: args[0], jsonOutput: false };
+  const valueOptions = VALUE_OPTIONS[result.command ?? ""] ?? DEFAULT_VALUE_OPTIONS;
   let format: string | undefined;
 
   for (let index = 1; index < args.length; index++) {
     const arg = args[index]!;
     const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
     const name = equals === -1 ? arg : arg.slice(0, equals);
-    const inline = equals === -1 ? undefined : arg.slice(equals + 1);
-    const next = (): string | undefined => {
-      if (inline !== undefined) return inline;
-      const value = args[index + 1];
-      if (value === undefined) return undefined;
-      index++;
-      return value;
-    };
+    if (!valueOptions.includes(name)) continue;
 
-    if (takesValue(name, "--cwd")) result.cwd = next();
-    else if (takesValue(name, "--config", "-c")) result.config = next();
-    else if (takesValue(name, "--format", "-f")) format = next();
+    let value: string | undefined;
+    if (equals !== -1) {
+      value = arg.slice(equals + 1);
+    } else {
+      const next = args[index + 1];
+      if (next === undefined || (next.startsWith("-") && next.length > 1)) continue;
+      value = next;
+      index++;
+    }
+
+    if (name === "--cwd") result.cwd = value;
+    else if (name === "--config" || name === "-c") result.config = value;
+    else if (name === "--format" || name === "-f") format = value;
   }
 
   result.jsonOutput = result.command === "check" && format === "json";
