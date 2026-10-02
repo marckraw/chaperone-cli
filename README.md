@@ -136,10 +136,10 @@ The `chaperone` you install is also a launcher. Before anything else, it reads `
 
 - **The pin names this binary's version:** it runs, as before. Nothing is downloaded.
 - **The pin names another version:** it runs that version instead, with the same arguments, stdio, environment and working directory. Its exit code is the run's exit code (`2` included), and a signal that ends it ends the run. On macOS and Linux the pinned binary replaces the launcher's process (exec), so nothing stays in between; on Windows it runs as a child, gets Ctrl-C from the console itself, and the launcher passes its exit code on. The first time, the launcher downloads the release binary for your platform from GitHub, checks it against the release's `SHA256SUMS.txt`, and keeps it in the cache; from then on it works offline. Handing over to a cached version costs about one extra binary start: tens of milliseconds.
-- **No pin:** it runs, as before. A text report on a terminal ends with a one-line tip to pin; the tip never appears with `--format json` or `ai`, with `--quiet`, or when stderr is not a terminal (CI, agents).
+- **No pin:** it runs the [machine default](#machine-default) if the machine has one, exactly as if it were pinned; otherwise it runs, as before. A text report on a terminal ends with a one-line tip to pin; the tip never appears with `--format json` or `ai`, with `--quiet`, or when stderr is not a terminal (CI, agents).
 - **Pins older than the launcher work:** a pin like `0.9.0` runs 0.9.0, which knows nothing of pins. It reports `unknown field "chaperoneVersion" is ignored` as a configuration warning, which never changes the exit code.
 
-**It never runs a different version.** When the pinned version is not cached and cannot be installed (no network, a checksum that does not match, a version with no release, a platform with no binary), or the cached binary cannot be run (a cache on a filesystem mounted `noexec`), nothing runs: the launcher explains what happened and what to do on stderr, and exits with code `2`. With `check --format json`, stdout carries the reason as one JSON document (`"error": "pinned-version-unavailable"`).
+**It never runs a different version.** When the pinned version (or the machine default) is not cached and cannot be installed (no network, a checksum that does not match, a version with no release, a platform with no binary), or the cached binary cannot be run (a cache on a filesystem mounted `noexec`), nothing runs: the launcher explains what happened and what to do on stderr, and exits with code `2`. With `check --format json`, stdout carries the reason as one JSON document (`"error": "pinned-version-unavailable"`).
 
 ### The `chaperoneVersion` field
 
@@ -148,15 +148,53 @@ The `chaperone` you install is also a launcher. Before anything else, it reads `
 - A misspelled field (`chaperone_version`, `chaperoneVerison`) is an error rather than an unknown-field warning: it would pin nothing.
 - Only the project's own config counts. A preset (`extends`) cannot pin, and saying so is an error.
 
+### Machine default
+
+Where nothing pins a version, the machine can name the one it runs: the machine default. With it, the `chaperone` on a machine with many unpinned repositories can become the launcher without moving all of them to a new version at once: they keep the version they ran, and each one moves when it pins. See [Upgrading a machine with many unpinned repositories](./MIGRATION.md#upgrading-a-machine-with-many-unpinned-repositories).
+
+```bash
+chaperone default 0.7.1      # Download and verify 0.7.1, then make it the default
+chaperone default            # Show the default, and where it comes from
+chaperone default --clear    # Remove it: unpinned repositories run the installed chaperone again
+```
+
+The version that runs is the first of:
+
+1. The repository's `chaperoneVersion`. A pin always wins, and an invalid pin stays an error (exit code `2`): the default never stands in for it.
+2. `CHAPERONE_DEFAULT_VERSION`, when it is set and not empty: for one shell, or one command.
+3. `"defaultVersion"` in the machine's config file, which `chaperone default` writes (other fields in the file are kept):
+
+   | File | When |
+   |------|------|
+   | `$XDG_CONFIG_HOME/chaperone/config.json` | when `XDG_CONFIG_HOME` is set (an absolute path) |
+   | `%APPDATA%\chaperone\config.json` | Windows |
+   | `~/.config/chaperone/config.json` | macOS and Linux |
+
+   ```json
+   {
+     "defaultVersion": "0.7.1"
+   }
+   ```
+
+4. The installed `chaperone` itself.
+
+The launcher treats the default exactly like a pin: the same cache, the same check against the release's `SHA256SUMS.txt`, the same hand-over, and never another version in its place. `chaperone --version` names where it came from: `chaperone v0.7.1 (machine default in ~/.config/chaperone/config.json, launched by v0.10.1)`, or `(machine default from CHAPERONE_DEFAULT_VERSION, ...)`.
+
+- The default applies wherever nothing is pinned, including a directory with no `.chaperone.json`: `chaperone init` runs the default version too. To start a repository on another version: `CHAPERONE_DEFAULT_VERSION=0.10.1 chaperone init`.
+- The value is checked like a pin: an exact version, `v0.7.1` read as `0.7.1`. An invalid value, a file that is not a JSON object, or a misspelled field (`default_version`, or `chaperoneVersion`, which belongs in a repository's config) stops every run that would use the default with exit code `2`, saying where it came from (with `check --format json`, `"error": "invalid-machine-default"`). Repositories that pin are not affected.
+- `chaperone default <version>` downloads and verifies the version before it writes anything, so a default that cannot be installed is never written, and once it has run the default works offline.
+- `CHAPERONE_IGNORE_PIN=1` ignores the default too. A CI runner has no default unless you give it one: there, the repository's pin decides.
+
 ### Commands
 
 | Command | What it does |
 |---------|--------------|
-| `chaperone --version` | The version that runs here first, then the launcher's: `chaperone v0.9.0 (pinned in .chaperone.json, launched by v0.10.0)`. Without a pin, `chaperone v0.10.0 (not pinned: ...)`; without a config, `chaperone v0.10.0`. |
+| `chaperone --version` | The version that runs here first, then the launcher's: `chaperone v0.9.0 (pinned in .chaperone.json, launched by v0.10.0)`, or for the machine default `chaperone v0.7.1 (machine default in ~/.config/chaperone/config.json, launched by v0.10.1)`. Without either, `chaperone v0.10.0 (not pinned: ...)`; without a config, `chaperone v0.10.0`. |
 | `chaperone pin [version]` | Writes `chaperoneVersion` (this binary's version by default), keeping the file's formatting. Another version is downloaded and verified first, so a pin that cannot be installed is never written. |
+| `chaperone default [version]` | Shows the [machine default](#machine-default), or sets it (downloaded and verified first). `chaperone default --clear` removes it. |
 | `chaperone cache` | Lists the cached versions. `chaperone cache clear [version]` removes them (only files Chaperone wrote). |
 
-`version`, `pin` and `cache` are the launcher's own commands and work whatever the pin says. Every other command, `help` included, runs in the pinned version.
+`version`, `pin`, `default` and `cache` are the launcher's own commands and work whatever the pin (or the machine default) says. Every other command, `help` included, runs in the version the pin or the default names.
 
 ### Cache and environment
 
@@ -175,10 +213,11 @@ A download goes to a temporary file next to its final path and is renamed into p
 |----------|--------|
 | `CHAPERONE_CACHE_DIR` | Where pinned versions are kept. |
 | `CHAPERONE_RELEASES_URL` | Download from a mirror laid out as `<url>/v<version>/<file>` (default `https://github.com/marckraw/chaperone-cli/releases/download`). |
-| `CHAPERONE_IGNORE_PIN=1` | Run the installed version even though the repository pins another one, with a note on stderr: to try an upgrade before pinning it, or to run a development build. |
+| `CHAPERONE_DEFAULT_VERSION` | The [machine default](#machine-default), over the config file's `defaultVersion`. A repository's pin still wins. |
+| `CHAPERONE_IGNORE_PIN=1` | Run the installed version even though the repository pins another one, or the machine default names one, with a note on stderr: to try an upgrade before pinning it, or to run a development build. |
 | `CHAPERONE_LAUNCHED` | Internal: tells a launched version not to launch again (it removes it from its environment, so the commands it runs do not inherit it). |
 
-The pinned version does not print "update available": the pin chose it. In a repository pinned to the version you have installed, the notice says how to move the pin (`chaperone pin <latest>`).
+A version the launcher runs for a pin or the machine default does not print "update available": the pin or the default chose it (0.7 and older print it anyway: they predate the switch that turns it off). In a repository pinned to the version you have installed, the notice says how to move the pin (`chaperone pin <latest>`); where the machine default is the version you have installed, how to move the default (`chaperone default <latest>`).
 
 ### In CI
 
@@ -209,6 +248,7 @@ chaperone analyze              # Extract rules from CLAUDE.md, AGENTS.md, ...
 
 chaperone pin                  # Pin this version in .chaperone.json
 chaperone pin 0.9.0            # Pin another version (downloaded and verified first)
+chaperone default 0.9.0        # Run 0.9.0 wherever nothing is pinned (the machine default)
 chaperone cache                # List the versions downloaded for pins
 chaperone cache clear          # Remove them
 
@@ -239,7 +279,7 @@ Unknown options, missing option values and unknown `--format` values are usage e
 |------|---------|
 | `0` | The check passed (warnings do not fail it) |
 | `1` | The check ran and found at least one error |
-| `2` | Chaperone could not do its job: invalid configuration, usage error (unknown option, bad value, unknown command, bad `--since` ref), a pinned version that cannot be installed, or internal error. Nothing is reported as passed. |
+| `2` | Chaperone could not do its job: invalid configuration, usage error (unknown option, bad value, unknown command, bad `--since` ref), a pinned version (or machine default) that cannot be installed, an invalid machine default, or internal error. Nothing is reported as passed. |
 
 ### Output and environment
 

@@ -11,17 +11,86 @@ The checks themselves do not change: a config that passes on 0.9 passes on 0.10.
 - **`chaperone pin [version]`** writes the field; **`chaperone cache`** lists and clears downloaded versions; **`chaperone --version`** names the version that runs here and the launcher's.
 - **`install.sh --version pinned`** (or `CHAPERONE_VERSION=pinned`) installs the version a repository pins: one line in CI.
 - **`chaperone init`** pins new configs to the version that wrote them.
+- **0.10.1: a machine default.** Where nothing pins a version, `chaperone default <version>` (or `CHAPERONE_DEFAULT_VERSION`) names the version the machine runs, treated exactly like a pin. A machine with many unpinned repositories can then install the launcher without moving all of them at once: see [Upgrading a machine with many unpinned repositories](#upgrading-a-machine-with-many-unpinned-repositories).
 
-See [Pinning a version](./README.md#pinning-a-version) for everything else (the cache, the environment variables, what happens offline).
+See [Pinning a version](./README.md#pinning-a-version) for everything else (the cache, the environment variables, what happens offline, the machine default).
 
 ## Upgrading to 0.10
 
-1. **Install the launcher once:** `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.0 sh`. This is the last upgrade that changes what every repository runs: a repository that pins keeps its version from now on. Until a repository pins, it runs 0.10.0.
-2. **Pin each repository:** `chaperone pin` pins 0.10.0; `chaperone pin 0.9.0` keeps the version a repository runs today, to upgrade it later on its own. Commit `.chaperone.json`.
+1. **Install the launcher once:** `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.1 sh`. This is the last upgrade that changes what every repository runs: a repository that pins keeps its version from now on. Until a repository pins, it runs 0.10.1. **On a machine where repositories do not pin yet, especially if some run Chaperone in a git hook, do not run this line: follow [Upgrading a machine with many unpinned repositories](#upgrading-a-machine-with-many-unpinned-repositories) instead, which keeps them on the version they run today.**
+2. **Pin each repository:** `chaperone pin` pins the version you installed; `chaperone pin 0.9.0` keeps the version a repository runs today, to upgrade it later on its own. Commit `.chaperone.json`.
 3. **Install the pinned version in CI:** replace `CHAPERONE_VERSION: v0.9.0` (or a hard-coded download) with `curl -fsSL .../install.sh | CHAPERONE_VERSION=pinned sh`. The field is then the only place the version lives. (Outside CI, that is without `CI` set, `pinned` refuses a pin older than 0.10: such a version has no launcher, and as a workstation's `chaperone` it would run in every repository. Workstations keep the launcher.)
 4. **Delete wrapper scripts,** once the pinned version demonstrably runs in their place (next section).
 
 Upgrading a repository later is `chaperone pin <version>`: the launcher downloads the version, and the diff is one line that CI checks.
+
+## Upgrading a machine with many unpinned repositories
+
+Until a repository pins, it runs whatever `chaperone` the machine has installed. Replace an old `chaperone` (0.9 or earlier) with the launcher, and every repository that does not pin moves to the new version at once. That includes repositories that run Chaperone in a git hook, where a check that 0.8 made stricter can start refusing commits in a repository you are not even working on. A machine default (0.10.1 or later) prevents that: those repositories keep running the version they run today, the installed `chaperone` becomes the launcher, and each repository moves when it pins.
+
+The order matters: **set the default first, then install the launcher.**
+
+- Not with the old binary: it has no `default` command and answers `Unknown command: default`.
+- Not after installing: until the default is set, every unpinned repository, and every hook in it, runs the new version.
+
+So set it with the new binary, run from a temporary directory, while the old `chaperone` is still the one on your PATH:
+
+1. Note the version the machine runs today, and where it is installed:
+
+   ```sh
+   chaperone --version     # chaperone v0.7.1
+   command -v chaperone    # /Users/you/.local/bin/chaperone
+   ```
+
+2. Fetch the launcher into a temporary directory. The `chaperone` on your PATH does not change (the script notes that the directory is not in PATH: that is expected):
+
+   ```sh
+   tmp="$(mktemp -d)"
+   curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.1 CHAPERONE_INSTALL_DIR="$tmp" sh
+   ```
+
+3. Set the machine default to the version from step 1, with that launcher:
+
+   ```sh
+   "$tmp/chaperone" default 0.7.1
+   ```
+
+   It downloads 0.7.1, checks it against the release's `SHA256SUMS.txt` and caches it, and only then writes `"defaultVersion": "0.7.1"` to `~/.config/chaperone/config.json` (`$XDG_CONFIG_HOME/chaperone/config.json` when `XDG_CONFIG_HOME` is set), keeping anything else in the file. If the download or the check fails, nothing is written: fix the cause and run it again. Because the version is then cached, hooks keep working offline from the first run.
+
+   Without the network at hand, write the file by hand instead. This never replaces an existing file; if there is one, add the field to it:
+
+   ```sh
+   dir="${XDG_CONFIG_HOME:-$HOME/.config}/chaperone"
+   mkdir -p "$dir"
+   [ -e "$dir/config.json" ] || printf '{\n  "defaultVersion": "0.7.1"\n}\n' > "$dir/config.json"
+   ```
+
+   The first run that needs 0.7.1 then downloads it, and fails (exit code 2, never another version) if it cannot. Running `chaperone default 0.7.1` later, online, downloads it ahead of time.
+
+4. Before installing anything, check what the launcher would run. In a repository that does not pin a version:
+
+   ```sh
+   "$tmp/chaperone" default      # Machine default: Chaperone 0.7.1, in ~/.config/chaperone/config.json.
+   "$tmp/chaperone" --version    # chaperone v0.7.1 (machine default in ~/.config/chaperone/config.json, launched by v0.10.1)
+   ```
+
+   For more certainty, compare a check. `chaperone check --format json > /tmp/old.json; echo $?` and `"$tmp/chaperone" check --format json > /tmp/new.json; echo $?` must exit with the same code, and `diff <(jq -S .results /tmp/old.json) <(jq -S .results /tmp/new.json)` must print nothing. If `--version` does not name the machine default, stop here: the old `chaperone` is still installed, and nothing has changed.
+
+5. Install the launcher over the old binary, in the same directory, and clean up:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.1 CHAPERONE_INSTALL_DIR="$(dirname "$(command -v chaperone)")" sh
+   rm -rf "$tmp"
+   ```
+
+6. Check that `chaperone --version` in an unpinned repository prints the line from step 4, and in a pinned one, its pin. If it prints the old version alone, the old binary is still first on your PATH: the install script falls back to `~/.local/bin` when the directory is not writable.
+
+From then on, repositories move one at a time:
+
+- `chaperone pin 0.10.1` in a repository (then commit `.chaperone.json`) moves that one, and `chaperone pin 0.7.1` records the version it runs today.
+- Once no unpinned repository needs the old version, `chaperone default 0.10.1` moves the rest. Or `chaperone default --clear` removes the default, and unpinned repositories run the installed `chaperone`.
+
+0.7.1 and older still print their own "Update available" notice: they predate the switch the launcher uses to turn it off. Installing the latest `chaperone` does not move those repositories: the default and the pins do. A shell, hook or app that sets `CHAPERONE_DEFAULT_VERSION`, or another `XDG_CONFIG_HOME`, sees a different default; `chaperone default` shows the one in effect.
 
 ## Replacing a wrapper script
 
@@ -29,11 +98,11 @@ Some repositories already pin Chaperone with a script. accent.'s `scripts/chaper
 
 1. Read the version the script pins (accent.'s: `const VERSION = "0.8.0"`), and pin the same one: `chaperone pin 0.8.0`.
 2. Prove the same version runs:
-   - `node scripts/chaperone.mjs --version` and `chaperone --version` must name the same version (`chaperone v0.8.0`, and `chaperone v0.8.0 (pinned in .chaperone.json, launched by v0.10.0)`).
+   - `node scripts/chaperone.mjs --version` and `chaperone --version` must name the same version (`chaperone v0.8.0`, and `chaperone v0.8.0 (pinned in .chaperone.json, launched by v0.10.1)`).
    - `node scripts/chaperone.mjs check --format json > /tmp/script.json; echo $?` and `chaperone check --format json > /tmp/pinned.json; echo $?` must exit with the same code and report the same results: `diff <(jq -S '.results' /tmp/script.json) <(jq -S '.results' /tmp/pinned.json)` prints nothing.
    (Versions before 0.10 report `unknown field "chaperoneVersion" is ignored` among the configuration warnings; that warning is the only expected difference, in `.diagnostics`.)
 3. Point everything at `chaperone`: package.json scripts (`"chaperone": "chaperone check"`), git hooks and CI (`CHAPERONE_VERSION=pinned`). Then delete the script and its cache (`node_modules/.cache/chaperone`).
-4. Now upgrade: `chaperone pin 0.10.0`, run `chaperone check`, and fix what newly fails (for 0.8 → 0.10, see [Coming from 0.8.x](#coming-from-08x-what-09-changed)).
+4. Now upgrade: `chaperone pin 0.10.1`, run `chaperone check`, and fix what newly fails (for 0.8 → 0.10, see [Coming from 0.8.x](#coming-from-08x-what-09-changed)).
 
 ## What might newly fail in 0.10
 
@@ -43,6 +112,7 @@ Some repositories already pin Chaperone with a script. accent.'s `scripts/chaper
 - `chaperone --version` adds a note in parentheses, and in a pinned repository its first version is the pinned one: `chaperone v0.9.0 (pinned in .chaperone.json, launched by v0.10.0)`. The output still starts with `chaperone v<version>`.
 - `chaperone help` runs in the pinned version, so a repository pinned to 0.9 shows 0.9's help (without `pin` and `cache`, which work anyway).
 - A repository that pins a version the machine has not cached yet needs the network on its first run. Offline, the run fails with exit code 2 instead of running another version.
+- With a machine default (0.10.1), a repository that does not pin runs the default's version, with the same rules as a pin. An invalid default (a range, a misspelled field, a file that is not JSON) fails every run that would use it with exit code 2, saying where it came from. Without a default, nothing changes.
 
 ## Coming from 0.8.x: what 0.9 changed
 
@@ -266,8 +336,8 @@ If a boundary rule now floods with violations you cannot fix yet, lower its `sev
 
 ## Upgrade checklist
 
-1. Install the 0.10.0 launcher once (`CHAPERONE_VERSION=0.10.0` with the install script). Repositories that pin keep their version from then on.
-2. In each repository: replace a wrapper script, if there is one, at its own version first ([Replacing a wrapper script](#replacing-a-wrapper-script)); then `chaperone pin 0.10.0` and commit `.chaperone.json`.
+1. Install the 0.10.1 launcher once (`CHAPERONE_VERSION=0.10.1` with the install script). On a machine with repositories that do not pin yet, set the machine default first ([Upgrading a machine with many unpinned repositories](#upgrading-a-machine-with-many-unpinned-repositories)). Repositories that pin keep their version from then on.
+2. In each repository: replace a wrapper script, if there is one, at its own version first ([Replacing a wrapper script](#replacing-a-wrapper-script)); then `chaperone pin 0.10.1` and commit `.chaperone.json`.
 3. In CI, install with `CHAPERONE_VERSION=pinned`, and remove the version from every other place (CI variables, scripts).
 4. Run `chaperone check --format json > /tmp/chaperone.json; echo $?`.
 5. Coming from 0.7.x and exit code 2: fix every listed configuration error (see [Coming from 0.7.x](#coming-from-07x-what-08-changed)), then rerun.
@@ -281,7 +351,7 @@ Paste this into a coding agent working in any repository that uses Chaperone:
 
 ```text
 This repository uses Chaperone, a CLI that checks repo conventions from .chaperone.json.
-Pin it to 0.10.0 in .chaperone.json, make `chaperone check` pass honestly, and then move
+Pin it to 0.10.1 in .chaperone.json, make `chaperone check` pass honestly, and then move
 checks that this repository runs as scripts into Chaperone's built-in rules. Work in
 this order.
 
@@ -290,12 +360,28 @@ allowlist entry just to make the check pass; delete a script before proving that
 replaces it does the same; edit generated files to silence a rule; or skip hooks
 (--no-verify).
 
-1. Make sure the installed chaperone is a launcher (0.10.0 or later).
-   - Run `chaperone --version`. If it is missing or older than 0.10.0, install 0.10.0:
-     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.0 sh`
-     The script verifies the checksum. It replaces the binary every repository on this
-     machine uses; from 0.10 on that binary runs whatever version each repository pins,
-     so repositories that pin are not affected. Mention the install in your summary.
+1. Make sure the installed chaperone is a launcher (0.10.0 or later), without changing
+   what the other repositories on this machine run.
+   - Run `chaperone --version`. The launcher's version is the "launched by" one when the
+     line has one, otherwise the first one. If it is 0.10.0 or later, go to step 2.
+   - If chaperone is missing, install 0.10.1 (the script verifies the checksum):
+     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.1 sh`
+   - If it is older than 0.10.0 (for example `chaperone v0.7.1`), it is one binary that
+     every repository on this machine shares, and the ones that do not pin a version
+     (some run it in git hooks) would all move to 0.10.1 the moment you replace it.
+     Keep them where they are: set a machine default to that old version first, then
+     install, as MIGRATION.md's "Upgrading a machine with many unpinned repositories"
+     says. With 0.7.1 as the old version:
+       tmp="$(mktemp -d)"
+       curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.1 CHAPERONE_INSTALL_DIR="$tmp" sh
+       "$tmp/chaperone" default 0.7.1
+       "$tmp/chaperone" default
+     The last line must print `Machine default: Chaperone 0.7.1, ...`. If it does not,
+     or `default 0.7.1` failed, stop and report it: do not replace the old binary.
+     Otherwise install over the old binary, in its own directory, and clean up:
+       curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.1 CHAPERONE_INSTALL_DIR="$(dirname "$(command -v chaperone)")" sh
+       rm -rf "$tmp"
+   Mention what you installed, and any machine default you set, in your summary.
 
 2. Find every place this repository decides which Chaperone runs:
    `grep -rn -i chaperone .github package.json scripts .husky lefthook.yml 2>/dev/null`.
@@ -306,8 +392,8 @@ replaces it does the same; edit generated files to silence a rule; or skip hooks
 
 3. If there is a wrapper script, replace it at its own version first, and prove it:
    - Pin the wrapper's version: `chaperone pin <its version>` (for example 0.8.0).
-   - `chaperone --version` must name that version
-     (`chaperone v0.8.0 (pinned in .chaperone.json, launched by v0.10.0)`), as the wrapper
+   - `chaperone --version` must name that version first
+     (`chaperone v0.8.0 (pinned in .chaperone.json, launched by v0.10.1)`), as the wrapper
      does (`node scripts/chaperone.mjs --version`).
    - Run both on the current tree:
      `node scripts/chaperone.mjs check --format json > /tmp/wrapper.json; echo "exit=$?"`
@@ -321,8 +407,8 @@ replaces it does the same; edit generated files to silence a rule; or skip hooks
      kept (such as node_modules/.cache/chaperone). Commit this step on its own.
    If the versions or the results differ, stop and report it: do not delete the wrapper.
 
-4. Pin 0.10.0: `chaperone pin 0.10.0`. `chaperone --version` must say
-   `chaperone v0.10.0 (pinned in .chaperone.json)`. Then make CI install exactly the
+4. Pin 0.10.1: `chaperone pin 0.10.1`. `chaperone --version` must start with
+   `chaperone v0.10.1 (pinned in .chaperone.json`. Then make CI install exactly the
    pinned version, replacing any other install step:
    `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh`
    Remove every other place that names a Chaperone version (CI variables, scripts):
@@ -394,7 +480,8 @@ replaces it does the same; edit generated files to silence a rule; or skip hooks
    existing canaries are written, and make sure each one fires.
 
 10. Finish with `chaperone check` exiting 0, and summarise: the launcher you installed
-   (if any), the pin (from which version to which), each place that named a version
+   and the machine default you set (if any), the pin (from which version to which),
+   each place that named a version
    and what replaced it, the wrapper script you replaced with the parity evidence
    (both versions, both exit codes, the results diff), what newly failed and how you
    fixed it, each script you replaced with a rule (with the parity evidence: what both

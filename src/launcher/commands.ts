@@ -1,29 +1,64 @@
 /**
- * The commands the launcher answers itself, whatever version the project pins: `version`, `pin`
- * and `cache`. Loaded only for those commands.
+ * The commands the launcher answers itself, whatever version the project pins: `version`, `pin`,
+ * `default` and `cache`. Loaded only for those commands.
  */
 
-import { existsSync, readdirSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { EXIT, parseArgs, UsageError } from "../utils/args";
 import { scanArgs } from "./argv";
-import { setPinInConfigText } from "./config-text";
-import { cacheRoot, cachedVersionPath, ensureVersion, readProjectPin } from "./context";
+import { setDefaultInConfigText, setPinInConfigText, type DefaultEdit } from "./config-text";
+import {
+  cacheRoot,
+  cachedVersionPath,
+  ensureVersion,
+  machineConfigFile,
+  readFileDefault,
+  readMachineConfigText,
+  readMachineDefault,
+  readProjectPin,
+  type MachineConfigFile,
+} from "./context";
 import { LaunchError } from "./errors";
 import { isPartialFile } from "./install";
-import { checkPinValue, normalizeVersion, PIN_FIELD } from "./pin";
-import { compareVersionsDescending, formatVersionLine, isTruthyEnv } from "./plan";
+import {
+  checkPinValue,
+  checkVersionValue,
+  DEFAULT_ENV,
+  DEFAULT_FIELD,
+  DEFAULT_FIELD_SETTING,
+  defaultFromEnv,
+  describeOrigin,
+  NO_DEFAULT,
+  normalizeVersion,
+  PIN_FIELD,
+} from "./pin";
+import { compareVersionsDescending, describeInvalidDefault, fixInvalidDefault, formatVersionLine, isTruthyEnv } from "./plan";
 
 /**
- * `chaperone --version`: the version that runs this project's commands, and the launcher's.
- * Exits 2 when the pin is invalid.
+ * `chaperone --version`: the version that runs this project's commands (the pinned one, or where
+ * nothing is pinned the machine default), and the launcher's. Exits 2 when the pin is invalid, or
+ * when the machine default that would decide here is.
  */
 export function runVersion(args: string[], selfVersion: string): number {
   const project = readProjectPin(scanArgs(["version", ...args]));
+  const ignorePin = isTruthyEnv(process.env["CHAPERONE_IGNORE_PIN"]);
+  const machineDefault = project.pin.kind === "none" ? readMachineDefault() : NO_DEFAULT;
+  const runs = project.pin.kind === "pinned" ? project.pin.version : machineDefault.kind === "set" ? machineDefault.version : null;
   let cached = false;
-  if (project.pin.kind === "pinned" && project.pin.version !== selfVersion) {
+  if (runs !== null && runs !== selfVersion) {
     try {
-      cached = existsSync(cachedVersionPath(project.pin.version));
+      cached = existsSync(cachedVersionPath(runs));
     } catch {}
   }
   console.log(
@@ -31,11 +66,14 @@ export function runVersion(args: string[], selfVersion: string): number {
       selfVersion,
       pin: project.pin,
       configLabel: project.exists ? project.configLabel : null,
+      machineDefault,
       cached,
-      ignorePin: isTruthyEnv(process.env["CHAPERONE_IGNORE_PIN"]),
+      ignorePin,
     })
   );
-  return project.exists && project.pin.kind === "invalid" ? EXIT.ERROR : EXIT.OK;
+  const invalidPin = project.exists && project.pin.kind === "invalid";
+  const invalidDefault = machineDefault.kind === "invalid" && !ignorePin;
+  return invalidPin || invalidDefault ? EXIT.ERROR : EXIT.OK;
 }
 
 const LOCATION_FLAGS = {
@@ -158,6 +196,215 @@ export async function runPin(args: string[], selfVersion: string): Promise<numbe
   return EXIT.OK;
 }
 
+const defaultHelp = (selfVersion: string, file: string) => `
+chaperone default - Set the Chaperone version this machine runs where nothing is pinned
+
+USAGE:
+  chaperone default                Show the machine default, and where it comes from
+  chaperone default <version>      Set it (downloaded and verified first)
+  chaperone default --clear        Remove it
+
+A repository that pins a version ("${PIN_FIELD}" in .chaperone.json) always
+runs its pin. Everywhere else, chaperone runs the machine default:
+${DEFAULT_ENV} when it is set, otherwise "${DEFAULT_FIELD}" in
+  ${file}
+Without either, it runs itself (${selfVersion}).
+
+The default is treated exactly like a pin: downloaded once, checked against the
+release's SHA256SUMS.txt, cached, and never replaced by another version. A
+version that cannot be installed is never written. CHAPERONE_IGNORE_PIN=1
+ignores the default too.
+
+OPTIONS:
+  --clear       Remove the machine default (other fields in the file stay)
+  --help, -h    Show this help message
+
+EXAMPLES:
+  chaperone default 0.7.1       Keep repositories that pin nothing on 0.7.1
+  chaperone default             Show it
+  chaperone default --clear     Repositories that pin nothing run this chaperone
+`;
+
+const DEFAULT_FLAGS = {
+  help: LOCATION_FLAGS.help,
+  clear: { names: ["--clear"], type: "boolean" },
+} as const;
+
+/**
+ * `chaperone default [<version> | --clear]`: show, set or remove the machine default. A version is
+ * downloaded and verified before it is written, as `chaperone pin` does.
+ */
+export async function runDefault(args: string[], selfVersion: string): Promise<number> {
+  const { positionals, flags } = splitPositionals(args);
+  let parsed;
+  try {
+    parsed = parseArgs(flags, DEFAULT_FLAGS);
+  } catch (error) {
+    if (error instanceof UsageError) return usageError("default", error.message);
+    throw error;
+  }
+  const file = machineConfigFile();
+  if (parsed.help) {
+    console.log(defaultHelp(selfVersion, file.label));
+    return EXIT.OK;
+  }
+  if (positionals.length > 1) return usageError("default", `Unexpected argument: ${positionals[1]}`);
+
+  const [requested] = positionals;
+  if (parsed.clear) {
+    if (requested !== undefined) return usageError("default", `--clear takes no version (got "${requested}")`);
+    return clearDefault(file, selfVersion);
+  }
+  if (requested === undefined) return showDefault(file, selfVersion);
+
+  const check = checkVersionValue(requested, DEFAULT_FIELD_SETTING);
+  if (!check.ok) return usageError("default", check.message);
+  return setDefault(file, check.version, selfVersion);
+}
+
+/** `chaperone default`: the machine default and where it comes from. Exits 2 when it is invalid. */
+function showDefault(file: MachineConfigFile, selfVersion: string): number {
+  const fromEnv = defaultFromEnv(process.env[DEFAULT_ENV]);
+  const fromFile = readFileDefault(file);
+  const current = fromEnv ?? fromFile;
+
+  if (current.kind === "invalid") {
+    console.error(`Error: ${describeInvalidDefault(current)}`);
+    const fix = fixInvalidDefault(current.origin);
+    console.error(`${fix.charAt(0).toUpperCase()}${fix.slice(1)}.`);
+    return EXIT.ERROR;
+  }
+  if (current.kind === "none") {
+    console.log(
+      `No machine default: where nothing is pinned, this chaperone (${selfVersion}) runs. ` +
+        `Set one with "chaperone default <version>" (written to ${file.label}).`
+    );
+    return EXIT.OK;
+  }
+
+  console.log(`Machine default: Chaperone ${current.version}, ${describeOrigin(current.origin)}.`);
+  if (fromEnv && fromFile.kind === "set") {
+    console.log(`(${file.label} sets ${fromFile.version}; ${DEFAULT_ENV} overrides it.)`);
+  } else if (fromEnv && fromFile.kind === "invalid") {
+    console.log(`(${DEFAULT_ENV} overrides ${file.label}, which is invalid: ${fromFile.message})`);
+  }
+  console.log(`Repositories that pin nothing run it; a repository's own "${PIN_FIELD}" always wins.`);
+  return EXIT.OK;
+}
+
+/** The machine config file's text, or null when there is none; or, when it cannot be read, an exit code. */
+function readForEdit(file: MachineConfigFile, action: string): { text: string | null } | { exit: number } {
+  try {
+    return { text: readMachineConfigText(file) };
+  } catch (error) {
+    console.error(`Error: cannot ${action}: cannot read ${file.label}: ${error instanceof Error ? error.message : String(error)}`);
+    return { exit: EXIT.ERROR };
+  }
+}
+
+/** Edit the file's text, or report why it cannot be edited (an exit code). */
+function editDefault(file: MachineConfigFile, text: string | null, version: string | null, action: string): DefaultEdit | number {
+  try {
+    return setDefaultInConfigText(text, version);
+  } catch (error) {
+    const problem = error instanceof SyntaxError ? `is not valid JSON (${error.message})` : `cannot be edited: ${(error as Error).message}`;
+    console.error(`Error: cannot ${action}: ${file.label} ${problem}. Fix or remove it, and run again.`);
+    return EXIT.ERROR;
+  }
+}
+
+/**
+ * Replace the file in one step (a temporary file renamed into place), so a run reading it at the
+ * same time sees the old content or the new, never half of it.
+ */
+function writeMachineConfig(file: MachineConfigFile, text: string): void {
+  mkdirSync(dirname(file.path), { recursive: true });
+  const temporary = `${file.path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, text, "utf-8");
+    renameSync(temporary, file.path);
+  } catch (error) {
+    try {
+      unlinkSync(temporary);
+    } catch {}
+    throw error;
+  }
+}
+
+/** Say so when CHAPERONE_DEFAULT_VERSION decides in this environment, not the file. */
+function noteEnvOverride(file: MachineConfigFile): void {
+  const value = process.env[DEFAULT_ENV];
+  if (value) console.error(`Note: ${DEFAULT_ENV} is set (${value}), and overrides ${file.label} in this environment.`);
+}
+
+async function setDefault(file: MachineConfigFile, version: string, selfVersion: string): Promise<number> {
+  const action = "set the machine default";
+  // Read and edit first: a file that cannot be edited is reported before anything is downloaded.
+  const read = readForEdit(file, action);
+  if ("exit" in read) return read.exit;
+  const edit = editDefault(file, read.text, version, action);
+  if (typeof edit === "number") return edit;
+
+  // Downloaded and verified even when the file already names it: once this succeeds, a run that
+  // needs the default works offline.
+  if (version !== selfVersion) {
+    try {
+      await ensureVersion(version, "Setting the machine default to");
+    } catch (error) {
+      if (!(error instanceof LaunchError)) throw error;
+      console.error(`Error: ${error.message}`);
+      console.error(`${file.label} was not changed.`);
+      return EXIT.ERROR;
+    }
+  }
+
+  if (edit.unchanged) {
+    console.log(`The machine default is already Chaperone ${version} (${file.label}).`);
+  } else {
+    try {
+      writeMachineConfig(file, edit.text);
+    } catch (error) {
+      console.error(`Error: cannot write ${file.label}: ${error instanceof Error ? error.message : String(error)}`);
+      return EXIT.ERROR;
+    }
+    const previous = typeof edit.previous === "string" ? normalizeVersion(edit.previous) ?? edit.previous : null;
+    const notes = [
+      previous && previous !== version ? `was ${previous}` : null,
+      edit.replacedKey ? `replaced the misspelled "${edit.replacedKey}"` : null,
+    ].filter(Boolean);
+    console.log(`Set the machine default to Chaperone ${version} in ${file.label}${notes.length > 0 ? ` (${notes.join("; ")})` : ""}.`);
+  }
+  noteEnvOverride(file);
+  return EXIT.OK;
+}
+
+function clearDefault(file: MachineConfigFile, selfVersion: string): number {
+  const action = "remove the machine default";
+  const read = readForEdit(file, action);
+  if ("exit" in read) return read.exit;
+  const edit = read.text === null ? null : editDefault(file, read.text, null, action);
+  if (typeof edit === "number") return edit;
+
+  if (edit === null || edit.unchanged) {
+    console.log(`No machine default in ${file.label}: nothing to remove.`);
+  } else {
+    try {
+      writeMachineConfig(file, edit.text);
+    } catch (error) {
+      console.error(`Error: cannot write ${file.label}: ${error instanceof Error ? error.message : String(error)}`);
+      return EXIT.ERROR;
+    }
+    const was = typeof edit.previous === "string" ? ` (${normalizeVersion(edit.previous) ?? edit.previous})` : "";
+    const misspelled = edit.removed.filter((key) => key !== DEFAULT_FIELD);
+    const also = misspelled.length > 0 ? `, with the misspelled ${misspelled.map((key) => `"${key}"`).join(", ")}` : "";
+    console.log(
+      `Removed the machine default${was} from ${file.label}${also}. Where nothing is pinned, this chaperone (${selfVersion}) runs.`
+    );
+  }
+  noteEnvOverride(file);
+  return EXIT.OK;
+}
+
 const cacheHelp = (root: string) => `
 chaperone cache - List or clear the Chaperone versions downloaded for pins
 
@@ -169,7 +416,8 @@ USAGE:
 The cache is ${root}
 (CHAPERONE_CACHE_DIR, or $XDG_CACHE_HOME/chaperone, or ~/.cache/chaperone;
 %LOCALAPPDATA%\\chaperone\\cache on Windows). A removed version is downloaded
-again the next time a repository that pins it runs chaperone.
+again the next time a repository that pins it (or the machine default) runs
+chaperone.
 `;
 
 interface CachedVersion {

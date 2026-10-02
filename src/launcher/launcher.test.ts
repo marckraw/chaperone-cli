@@ -13,11 +13,13 @@ import {
   ASSET,
   cachedFiles,
   fakeBinary,
+  hasTerminal,
   installIntoCache,
   launcherBinary,
   offlineUrl,
   report,
   runChaperone,
+  runOnTerminal,
   sandbox,
   startReleaseServer,
   type ReleaseServer,
@@ -393,20 +395,9 @@ describe("the hint to pin", () => {
     }
   }, SLOW);
 
-  const script = Bun.which("script");
-  const ttyTest = script && process.platform !== "win32" ? test : test.skip;
+  const ttyTest = hasTerminal ? test : test.skip;
   ttyTest("appears once after a text report on a terminal", async () => {
-    const box = sandbox(null);
-    const command = [process.execPath, CLI, "check"].map((part) => `'${part}'`).join(" ");
-    // script(1) gives the command a terminal; BSD and util-linux spell it differently.
-    const args =
-      process.platform === "darwin" ? [script!, "-q", "/dev/null", "/bin/sh", "-c", command] : [script!, "-qec", command, "/dev/null"];
-    const result = Bun.spawnSync(args, {
-      cwd: box.project,
-      env: { ...process.env, HOME: box.home, CHAPERONE_CACHE_DIR: box.cache, CHAPERONE_NO_UPDATE_CHECK: "1", NO_COLOR: "1" },
-      stdin: "ignore",
-    });
-    const output = result.stdout.toString();
+    const output = runOnTerminal([process.execPath, CLI], sandbox(null), ["check"]);
     expect(output).toContain("PASSED");
     expect(output.match(/Tip: pin Chaperone for this repository with "chaperone pin"/g)?.length).toBe(1);
   }, SLOW);

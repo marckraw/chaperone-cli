@@ -14,10 +14,23 @@ interface CliRun {
   stderr: string;
 }
 
+/**
+ * Run this checkout's CLI. No CHAPERONE_* variable leaks in, and the machine config file is an
+ * empty directory's: a machine default on the machine running the tests would otherwise make
+ * these unpinned projects launch that version instead of this checkout.
+ */
 function runCli(args: string[], cwd: string, env: Record<string, string> = {}): CliRun {
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("CHAPERONE_")));
   const result = Bun.spawnSync([process.execPath, CLI, ...args], {
     cwd,
-    env: { ...process.env, CHAPERONE_NO_UPDATE_CHECK: "1", NO_COLOR: "", FORCE_COLOR: "", ...env },
+    env: {
+      ...inherited,
+      XDG_CONFIG_HOME: makeProject(),
+      CHAPERONE_NO_UPDATE_CHECK: "1",
+      NO_COLOR: "",
+      FORCE_COLOR: "",
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

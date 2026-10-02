@@ -29,8 +29,9 @@ COMMANDS:
   check       Check codebase for convention violations
   analyze     Extract rules from AI instruction files (CLAUDE.md, etc.)
   pin         Pin the Chaperone version this repository runs
+  default     Set the version this machine runs where nothing is pinned
   cache       List or clear the versions downloaded for pins
-  version     Show the version (and the one this repository pins)
+  version     Show the version (and the one that runs here)
   help        Show this help message
 
 CHECK OPTIONS:
@@ -66,6 +67,8 @@ VERSION PINNING:
   the release's SHA256SUMS.txt and keeps it in ~/.cache/chaperone. When it can
   neither find nor download the pinned version, it exits with 2 instead of
   running another one. "chaperone pin [version]" writes the pin.
+  Where nothing is pinned, the machine default runs, treated like a pin:
+  "chaperone default <version>" sets it (CHAPERONE_DEFAULT_VERSION overrides it).
 
 EXAMPLES:
   chaperone init
@@ -77,6 +80,7 @@ EXAMPLES:
   chaperone analyze                      Extract rules from AI files
   chaperone analyze --dry-run            Preview without saving
   chaperone pin                          Pin this version in .chaperone.json
+  chaperone default 0.9.0                Run 0.9.0 wherever nothing is pinned
   chaperone version
 `;
 
@@ -262,7 +266,7 @@ async function runCheck(args: string[], launch: LaunchContext): Promise<number> 
         stderrIsTTY: Boolean(process.stderr.isTTY),
       })
     ) {
-      console.error(`${stderrColors.dim}${formatPinHint(VERSION, launch.configLabel)}${stderrColors.reset}`);
+      console.error(`${stderrColors.dim}${formatPinHint(VERSION, launch.configLabel, launch.machineDefault)}${stderrColors.reset}`);
     }
 
     // If --copy flag is set and there are remaining errors, copy to clipboard
@@ -325,7 +329,10 @@ export async function runCommand(args: string[], launch: LaunchContext): Promise
   let updateNotice: string | null = null;
   if (!isUpdateCheckDisabled(process.env)) {
     try {
-      updateNotice = getUpdateNotification({ pinned: launch.pin.kind === "pinned" });
+      updateNotice = getUpdateNotification({
+        pinned: launch.pin.kind === "pinned",
+        machineDefault: launch.machineDefault !== null,
+      });
     } catch {}
     refreshUpdateCache().catch(() => {});
   }

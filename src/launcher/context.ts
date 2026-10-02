@@ -1,13 +1,21 @@
 /**
- * The launcher's view of this machine and project: where the cache is, what the config pins.
+ * The launcher's view of this machine and project: where the cache is, what the config pins, and
+ * the machine default.
  */
 
 import { existsSync, readFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { CONFIG_FILENAME, displayPath, resolveConfigPath, type LauncherArgs } from "./argv";
 import { LaunchError, NetworkError } from "./errors";
-import { cachedBinaryPath, DEFAULT_RELEASES_URL, releaseAsset, resolveCacheRoot } from "./paths";
-import { readPin, type PinState } from "./pin";
+import {
+  cachedBinaryPath,
+  DEFAULT_RELEASES_URL,
+  homeRelativePath,
+  releaseAsset,
+  resolveCacheRoot,
+  resolveMachineConfigPath,
+} from "./paths";
+import { DEFAULT_ENV, defaultFromConfigText, defaultFromEnv, readPin, type MachineDefault, type PinState } from "./pin";
 
 export interface ProjectPin {
   /** Absolute path of the config file */
@@ -34,6 +42,53 @@ export function readProjectPin(args: LauncherArgs, processCwd: string = process.
     const message = error instanceof Error ? error.message : String(error);
     return { configPath, configLabel, exists: true, pin: { kind: "invalid", message: `cannot read the config: ${message}` } };
   }
+}
+
+export interface MachineConfigFile {
+  /** Absolute path */
+  path: string;
+  /** As shown in messages: `~/.config/chaperone/config.json` */
+  label: string;
+}
+
+/** The machine's config file (whether or not it exists), which holds the machine default. */
+export function machineConfigFile(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): MachineConfigFile {
+  const path = resolveMachineConfigPath({ env, platform: process.platform, home });
+  return { path, label: homeRelativePath(path, home, process.platform) };
+}
+
+/**
+ * The machine config file's text, or null when there is none.
+ *
+ * @throws when it exists but cannot be read
+ */
+export function readMachineConfigText(file: MachineConfigFile): string | null {
+  try {
+    return readFileSync(file.path, "utf-8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return null;
+    throw error;
+  }
+}
+
+/** The machine default the config file sets. A file that cannot be read sets an invalid one. */
+export function readFileDefault(file: MachineConfigFile): MachineDefault {
+  try {
+    return defaultFromConfigText(readMachineConfigText(file), file.label);
+  } catch (error) {
+    const message = `the file cannot be read (${error instanceof Error ? error.message : String(error)})`;
+    return { kind: "invalid", message, origin: { kind: "file", label: file.label } };
+  }
+}
+
+/**
+ * The machine default: CHAPERONE_DEFAULT_VERSION when it is set and not empty, otherwise
+ * `"defaultVersion"` in the machine config file (which is then the only thing read). The launcher
+ * reads it only where nothing is pinned: a repository's own pin always wins.
+ */
+export function readMachineDefault(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): MachineDefault {
+  return defaultFromEnv(env[DEFAULT_ENV]) ?? readFileDefault(machineConfigFile(env, home));
 }
 
 /**

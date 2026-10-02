@@ -79,15 +79,16 @@ export function displayPath(path: string, processCwd: string): string {
   return relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath) ? relativePath : path;
 }
 
-export type LauncherCommand = "version" | "pin" | "cache";
+export type LauncherCommand = "version" | "pin" | "cache" | "default";
 
 /**
- * Commands the launcher answers itself, whatever the pin says. Everything else runs in the
- * pinned version.
+ * Commands the launcher answers itself, whatever the pin (or the machine default) says.
+ * Everything else runs in the pinned version.
  */
 export function launcherCommand(command: string | undefined): LauncherCommand | null {
   if (command === "version" || command === "--version" || command === "-v") return "version";
   if (command === "pin") return "pin";
   if (command === "cache") return "cache";
+  if (command === "default") return "default";
   return null;
 }

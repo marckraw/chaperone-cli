@@ -66,19 +66,27 @@ export function isCacheStale(
 
 /**
  * The update notice. In a repository that pins its version (`pinned`), installing a newer binary
- * changes nothing there, so the notice says how to move the pin instead.
+ * changes nothing there, so the notice says how to move the pin instead; where the machine
+ * default chose the version (`machineDefault`), how to move the default.
  */
-export function formatUpdateNotice(current: string, latest: string, options: { pinned?: boolean } = {}): string {
+export function formatUpdateNotice(
+  current: string,
+  latest: string,
+  options: { pinned?: boolean; machineDefault?: boolean } = {}
+): string {
   const yellow = "\x1b[33m";
   const cyan = "\x1b[36m";
   const bold = "\x1b[1m";
   const reset = "\x1b[0m";
 
+  const move = (what: string, command: string): [string, string] => [`${what}: ${command}`, `${what}: ${cyan}${command}${reset}`];
   const lines: Array<[plain: string, styled: string]> = [
     [`Update available: ${current} → ${latest}`, `Update available: ${current} → ${bold}${cyan}${latest}${reset}`],
     options.pinned
-      ? [`This repository pins ${current}: chaperone pin ${latest}`, `This repository pins ${current}: ${cyan}chaperone pin ${latest}${reset}`]
-      : [DOWNLOAD_URL, `${cyan}${DOWNLOAD_URL}${reset}`],
+      ? move(`This repository pins ${current}`, `chaperone pin ${latest}`)
+      : options.machineDefault
+        ? move(`The machine default is ${current}`, `chaperone default ${latest}`)
+        : [DOWNLOAD_URL, `${cyan}${DOWNLOAD_URL}${reset}`],
   ];
   const width = Math.max(39, ...lines.map(([plain]) => plain.length));
 
@@ -146,7 +154,7 @@ export async function fetchLatestVersion(): Promise<string | null> {
 
 // --- Entry points ---
 
-export function getUpdateNotification(options: { pinned?: boolean } = {}): string | null {
+export function getUpdateNotification(options: { pinned?: boolean; machineDefault?: boolean } = {}): string | null {
   const cache = readCache();
   const update = evaluateCache(cache, VERSION);
   if (!update) return null;

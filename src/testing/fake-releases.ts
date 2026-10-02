@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { releaseAsset } from "../launcher/paths";
+import { releaseAsset, resolveMachineConfigPath } from "../launcher/paths";
 import { makeProject } from "./fixtures";
 
 /** This machine's release asset name. */
@@ -189,9 +189,46 @@ export interface RunOptions {
 }
 
 /**
- * Run a chaperone (`command`: this checkout's launcher, or a compiled binary) in a sandbox:
- * HOME and the cache are the sandbox's, releases come from `url`, the update check is off, and no
- * CHAPERONE_* or FAKE_* variable leaks in from the test's own environment.
+ * The environment of a run in a sandbox: HOME, the cache and the machine config file are the
+ * sandbox's, releases come from `url`, the update check is off, and no CHAPERONE_*, FAKE_* or
+ * XDG_* variable leaks in from the test's own environment (a machine default included).
+ */
+export function sandboxEnv(box: Sandbox, url: string, extra: Record<string, string | undefined> = {}): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("CHAPERONE_") && !key.startsWith("FAKE_") && key !== "XDG_CACHE_HOME" && key !== "XDG_CONFIG_HOME") {
+      env[key] = value;
+    }
+  }
+  return Object.assign(env, {
+    HOME: box.home,
+    // Windows reads the machine config from %APPDATA%
+    APPDATA: join(box.home, "AppData", "Roaming"),
+    CHAPERONE_CACHE_DIR: box.cache,
+    CHAPERONE_RELEASES_URL: url,
+    CHAPERONE_NO_UPDATE_CHECK: "1",
+    NO_COLOR: "",
+    FORCE_COLOR: "",
+    ...extra,
+  });
+}
+
+/** The sandbox's machine config file: `<home>/.config/chaperone/config.json` outside Windows. */
+export function machineConfigPath(box: Sandbox): string {
+  return resolveMachineConfigPath({ env: sandboxEnv(box, ""), platform: process.platform, home: box.home });
+}
+
+/** Write the sandbox's machine config file: `config` as JSON, or a string as it is. */
+export function writeMachineConfig(box: Sandbox, config: unknown): string {
+  const path = machineConfigPath(box);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, typeof config === "string" ? config : `${JSON.stringify(config, null, 2)}\n`);
+  return path;
+}
+
+/**
+ * Run a chaperone (`command`: this checkout's launcher, or a compiled binary) in a sandbox (see
+ * {@link sandboxEnv}).
  */
 export async function runChaperone(
   command: readonly string[],
@@ -200,19 +237,7 @@ export async function runChaperone(
   args: string[],
   options: RunOptions = {}
 ): Promise<Run> {
-  const env: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("CHAPERONE_") && !key.startsWith("FAKE_") && key !== "XDG_CACHE_HOME") env[key] = value;
-  }
-  Object.assign(env, {
-    HOME: box.home,
-    CHAPERONE_CACHE_DIR: box.cache,
-    CHAPERONE_RELEASES_URL: url,
-    CHAPERONE_NO_UPDATE_CHECK: "1",
-    NO_COLOR: "",
-    FORCE_COLOR: "",
-    ...options.env,
-  });
+  const env = sandboxEnv(box, url, options.env);
 
   const child = Bun.spawn([...command, ...args], {
     cwd: options.cwd ?? box.project,
@@ -248,3 +273,30 @@ export const report = (run: Run): FakeReport => JSON.parse(run.stdout.trim().spl
 /** The files in a sandbox cache's directory for `version`. */
 export const cachedFiles = (box: Sandbox, version: string): string[] =>
   existsSync(join(box.cache, version)) ? readdirSync(join(box.cache, version)).sort() : [];
+
+/** script(1), which runs a command on a terminal; null where there is none (Windows). */
+const SCRIPT = process.platform === "win32" ? null : Bun.which("script");
+
+/** {@link runOnTerminal} works here. */
+export const hasTerminal = SCRIPT !== null;
+
+/**
+ * Run a chaperone in a sandbox with stdout and stderr on a terminal, as a person runs it, and
+ * return what the terminal showed (both streams). Releases come from nowhere: offline.
+ */
+export function runOnTerminal(
+  command: readonly string[],
+  box: Sandbox,
+  args: string[],
+  env: Record<string, string | undefined> = {}
+): string {
+  const line = [...command, ...args].map((part) => `'${part}'`).join(" ");
+  // BSD (macOS) and util-linux spell it differently.
+  const argv = process.platform === "darwin" ? [SCRIPT!, "-q", "/dev/null", "/bin/sh", "-c", line] : [SCRIPT!, "-qec", line, "/dev/null"];
+  const result = Bun.spawnSync(argv, {
+    cwd: box.project,
+    env: sandboxEnv(box, offlineUrl(), { NO_COLOR: "1", ...env }),
+    stdin: "ignore",
+  });
+  return result.stdout.toString();
+}
