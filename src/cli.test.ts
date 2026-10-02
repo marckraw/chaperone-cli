@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "./testing/fixtures";
+import { VERSION } from "./version";
 
 const CLI = join(import.meta.dir, "cli.ts");
 
@@ -154,6 +155,8 @@ describe("chaperone init", () => {
   test("writes a config that loads without warnings", () => {
     const cwd = makeProject({ "tsconfig.json": "{}", "src/a.ts": "export const a = 1;\n" });
     expect(runCli(["init", "--yes"], cwd).exitCode).toBe(0);
+    // A new project runs the version that created its config
+    expect(JSON.parse(readFileSync(join(cwd, ".chaperone.json"), "utf-8")).chaperoneVersion).toBe(VERSION);
 
     const json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
     expect(json.diagnostics).toEqual([]);

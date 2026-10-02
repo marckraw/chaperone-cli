@@ -190,3 +190,33 @@ describe("validateConfigShape", () => {
     expect(validateConfigShape([], ".chaperone.json")[0]!.message).toContain("must be a JSON object");
   });
 });
+
+describe("validateConfigShape: chaperoneVersion", () => {
+  test("accepts an exact version, with or without a v", () => {
+    expect(validateConfigShape({ chaperoneVersion: "0.10.0", version: "1.0.0" }, ".chaperone.json")).toEqual([]);
+    expect(validateConfigShape({ chaperoneVersion: "v0.10.0" }, ".chaperone.json")).toEqual([]);
+  });
+
+  test("anything else is an error at the field, with a suggestion", () => {
+    expect(validateConfigShape({ chaperoneVersion: "0.10" }, ".chaperone.json")).toEqual([
+      {
+        level: "error",
+        source: ".chaperone.json",
+        path: "chaperoneVersion",
+        message: '"chaperoneVersion" must be an exact version, such as "0.10.0" (got "0.10") (did you mean "0.10.0"?)',
+      },
+    ]);
+    expect(validateConfigShape({ chaperoneVersion: 10 }, ".chaperone.json")[0]!.level).toBe("error");
+  });
+
+  test("a misspelled field is an error, not a warning: it would pin nothing", () => {
+    expect(validateConfigShape({ chaperone_version: "0.10.0" }, ".chaperone.json")).toEqual([
+      {
+        level: "error",
+        source: ".chaperone.json",
+        path: "chaperone_version",
+        message: 'unknown field "chaperone_version" (did you mean "chaperoneVersion"?): a misspelled version pin pins nothing',
+      },
+    ]);
+  });
+});

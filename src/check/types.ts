@@ -489,6 +489,8 @@ export interface ProjectConfig {
  * Full chaperone configuration
  */
 export interface ChaperoneConfig {
+  /** The Chaperone version this project runs (read by the launcher; only in the project's own config) */
+  chaperoneVersion?: string;
   version: string;
   extends?: string[]; // Preset specifiers (e.g., "chaperone/react-layered", "./local-preset.json")
   project?: ProjectConfig;

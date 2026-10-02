@@ -194,6 +194,35 @@
       },
 
       {
+        "id": "launcher-stays-light",
+        "type": "forbidden-import",
+        "severity": "error",
+        "files": "src/launcher/**/*.ts",
+        "exclude": ["**/*.test.ts"],
+        "restrictions": [
+          {
+            "source": "^(zod|ai|@ai-sdk/)",
+            "allowedIn": [],
+            "message": "The launcher runs before every command, also when it hands over to a pinned version: it must not load zod or the AI SDK"
+          },
+          {
+            "source": "^\\.\\./(check|analyze|init|presets|main)(/|$)",
+            "allowedIn": [],
+            "message": "The launcher must not load the commands: they run only when this binary, not a pinned version, runs the command"
+          }
+        ]
+      },
+
+      {
+        "id": "launcher-loads-lazily",
+        "type": "regex",
+        "severity": "error",
+        "files": "src/{cli.ts,launcher/index.ts,launcher/context.ts}",
+        "pattern": "^\\s*import\\s(?!type\\b)[^;]*from\\s+[\"']\\./(main|check|analyze|init|presets|index|install|commands|config-text)[\"'/]",
+        "message": "Loaded lazily (await import(...)) on purpose: a static import here makes every hand-over to a pinned version load it (the commands with zod and the AI SDK, or node:crypto and node:util)"
+      },
+
+      {
         "id": "rules-no-cross-module",
         "type": "forbidden-import",
         "severity": "error",

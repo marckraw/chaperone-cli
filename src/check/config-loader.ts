@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { PIN_FIELD } from "../launcher/pin";
 import { getBuiltInPreset, listBuiltInPresets } from "../presets";
 import {
   formatDiagnostic,
@@ -119,6 +120,18 @@ function addSource(
   state.diagnostics.push(...validateConfigShape(raw, label));
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return;
+  }
+
+  // The launcher reads the pin from the project's own config before anything loads, so a pin in
+  // a preset would never apply.
+  const isPreset = ancestry.length > 1;
+  if (isPreset && PIN_FIELD in raw) {
+    state.diagnostics.push({
+      level: "error",
+      source: label,
+      path: PIN_FIELD,
+      message: `"${PIN_FIELD}" only works in the project's own config file, where the launcher reads it; move it there`,
+    });
   }
 
   const config = raw as Partial<ChaperoneConfig> & { extends?: string | string[] };
