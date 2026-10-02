@@ -4,23 +4,33 @@ set -eu
 REPO="${CHAPERONE_REPO:-marckraw/chaperone-cli}"
 VERSION="${CHAPERONE_VERSION:-latest}"
 INSTALL_DIR="${CHAPERONE_INSTALL_DIR:-/usr/local/bin}"
+CONFIG="${CHAPERONE_CONFIG:-.chaperone.json}"
+RELEASES_URL="${CHAPERONE_RELEASES_URL:-}"
 
 usage() {
   cat <<EOF
 Install chaperone from GitHub Releases.
 
 Usage:
-  install.sh [--version <version>] [--install-dir <dir>] [--repo <owner/repo>]
+  install.sh [--version <version|latest|pinned>] [--config <path>]
+             [--install-dir <dir>] [--repo <owner/repo>]
+
+  --version pinned   Install the version the project pins: "chaperoneVersion"
+                     in .chaperone.json (or the file given with --config).
+                     Meant for CI: the job then runs exactly the pinned version.
 
 Examples:
   sh install.sh
   sh install.sh --version 0.3.0
+  sh install.sh --version pinned
   sh install.sh --install-dir "\$HOME/.local/bin"
 
 Environment variables:
-  CHAPERONE_VERSION
+  CHAPERONE_VERSION       a version, "latest" (default) or "pinned"
+  CHAPERONE_CONFIG        the config "pinned" reads (default: .chaperone.json)
   CHAPERONE_INSTALL_DIR
   CHAPERONE_REPO
+  CHAPERONE_RELEASES_URL  download from a mirror laid out as <url>/v<version>/<file>
 EOF
 }
 
@@ -28,6 +38,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --version)
       VERSION="${2:-}"
+      shift 2
+      ;;
+    --config)
+      CONFIG="${2:-}"
       shift 2
       ;;
     --install-dir)
@@ -85,6 +99,29 @@ case "${UNAME_M}" in
     ;;
 esac
 
+PINNED_FROM=""
+if [ "${VERSION}" = "pinned" ]; then
+  # The pin is "chaperoneVersion": "<version>" in the project's config (plain JSON). The lines are
+  # joined first, so the key and its value may sit on different lines.
+  if [ ! -f "${CONFIG}" ]; then
+    echo "Cannot install the pinned version: ${CONFIG} not found." >&2
+    echo "Run this from the project root, or pass --config <path>." >&2
+    exit 1
+  fi
+  PINNED="$(tr '\n\r' '  ' < "${CONFIG}" | sed -n 's/.*"chaperoneVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -z "${PINNED}" ]; then
+    echo "Cannot install the pinned version: ${CONFIG} has no \"chaperoneVersion\"." >&2
+    echo "Pin one with \"chaperone pin\", or install a version with --version <version>." >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "${PINNED}" | grep -Eq '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+    echo "Cannot install the pinned version: \"chaperoneVersion\" in ${CONFIG} is \"${PINNED}\", not an exact version such as \"0.10.0\"." >&2
+    exit 1
+  fi
+  VERSION="${PINNED}"
+  PINNED_FROM=" (pinned in ${CONFIG})"
+fi
+
 if [ "${VERSION}" = "latest" ]; then
   TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
   if [ -z "${TAG}" ]; then
@@ -98,7 +135,11 @@ else
   esac
 fi
 
-BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+if [ -n "${RELEASES_URL}" ]; then
+  BASE_URL="${RELEASES_URL%/}/${TAG}"
+else
+  BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+fi
 ASSET="chaperone-${OS}-${ARCH}"
 
 TMP_DIR="$(mktemp -d)"
@@ -107,7 +148,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Installing chaperone from ${REPO} ${TAG}..."
+echo "Installing chaperone ${TAG}${PINNED_FROM} from ${BASE_URL}..."
 echo "Detected target: ${OS}-${ARCH}"
 
 CHECKSUMS_PATH="${TMP_DIR}/SHA256SUMS.txt"
