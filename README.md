@@ -39,13 +39,19 @@ With a specific version:
 curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.3.0 sh
 ```
 
+The version the project in the current directory pins (meant for CI; see [In CI](#in-ci)):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh
+```
+
 Custom install directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
-The install script auto-detects your OS and architecture, downloads the correct binary, verifies the SHA256 checksum, and installs it. If `/usr/local/bin` is not writable, it falls back to `~/.local/bin`.
+The install script auto-detects your OS and architecture, downloads the correct binary, verifies the SHA256 checksum, and installs it. If `/usr/local/bin` is not writable, it falls back to `~/.local/bin`. Since 0.10 the binary you install is also a launcher: a repository that pins another version runs that version, so installing a newer `chaperone` no longer changes what every repository on the machine runs.
 
 **Windows (PowerShell):**
 
@@ -108,7 +114,84 @@ chaperone init
 chaperone check
 ```
 
-The `init` command scans your project, detects existing tools (TypeScript, ESLint, Prettier, package manager), and creates a `.chaperone.json` config file.
+The `init` command scans your project, detects existing tools (TypeScript, ESLint, Prettier, package manager), and creates a `.chaperone.json` config file, pinned to the version that wrote it.
+
+## Pinning a version
+
+Each repository pins the Chaperone it runs, the way `.nvmrc` works with fnm. One field in `.chaperone.json` does it:
+
+```json
+{
+  "chaperoneVersion": "0.10.0",
+  "version": "1.0.0",
+  "rules": { "custom": [] }
+}
+```
+
+`chaperone pin` writes the field for the version you have installed, `chaperone pin 0.9.0` for another one. Commit it like any other config change: upgrading Chaperone in a repository is then a one-line diff that CI checks, and upgrading the `chaperone` on your machine changes nothing in repositories that pin.
+
+### How it works
+
+The `chaperone` you install is also a launcher. Before anything else, it reads `chaperoneVersion` from the config the command would load: `.chaperone.json` in the working directory, or the files `--cwd` and `--config` name, as `check` reads them. Then:
+
+- **The pin names this binary's version:** it runs, as before. Nothing is downloaded.
+- **The pin names another version:** it runs that version instead, with the same arguments, stdio, environment and working directory. Its exit code is the run's exit code (`2` included), and a signal that ends it ends the run. On macOS and Linux the pinned binary replaces the launcher's process (exec), so nothing stays in between; on Windows it runs as a child, gets Ctrl-C from the console itself, and the launcher passes its exit code on. The first time, the launcher downloads the release binary for your platform from GitHub, checks it against the release's `SHA256SUMS.txt`, and keeps it in the cache; from then on it works offline. Handing over to a cached version costs about one extra binary start: tens of milliseconds.
+- **No pin:** it runs, as before. A text report on a terminal ends with a one-line tip to pin; the tip never appears with `--format json` or `ai`, with `--quiet`, or when stderr is not a terminal (CI, agents).
+- **Pins older than the launcher work:** a pin like `0.9.0` runs 0.9.0, which knows nothing of pins. It reports `unknown field "chaperoneVersion" is ignored` as a configuration warning, which never changes the exit code.
+
+**It never runs a different version.** When the pinned version is not cached and cannot be installed (no network, a checksum that does not match, a version with no release, a platform with no binary), or the cached binary cannot be run (a cache on a filesystem mounted `noexec`), nothing runs: the launcher explains what happened and what to do on stderr, and exits with code `2`. With `check --format json`, stdout carries the reason as one JSON document (`"error": "pinned-version-unavailable"`).
+
+### The `chaperoneVersion` field
+
+- An exact version: `MAJOR.MINOR.PATCH`, with an optional pre-release (`0.11.0-rc.1`). `v0.10.0` is accepted and means `0.10.0` (the release tagged `v0.10.0`); `chaperone pin` writes the version without the `v`.
+- Anything else stops the run with exit code `2`, with a suggestion where one fits: `"chaperoneVersion" must be an exact version, such as "0.10.0", not a range (got "^0.9") (did you mean "0.9.0"?)`. Ranges and `latest` are refused because the version would change under you.
+- A misspelled field (`chaperone_version`, `chaperoneVerison`) is an error rather than an unknown-field warning: it would pin nothing.
+- Only the project's own config counts. A preset (`extends`) cannot pin, and saying so is an error.
+
+### Commands
+
+| Command | What it does |
+|---------|--------------|
+| `chaperone --version` | The version that runs here first, then the launcher's: `chaperone v0.9.0 (pinned in .chaperone.json, launched by v0.10.0)`. Without a pin, `chaperone v0.10.0 (not pinned: ...)`; without a config, `chaperone v0.10.0`. |
+| `chaperone pin [version]` | Writes `chaperoneVersion` (this binary's version by default), keeping the file's formatting. Another version is downloaded and verified first, so a pin that cannot be installed is never written. |
+| `chaperone cache` | Lists the cached versions. `chaperone cache clear [version]` removes them (only files Chaperone wrote). |
+
+`version`, `pin` and `cache` are the launcher's own commands and work whatever the pin says. Every other command, `help` included, runs in the pinned version.
+
+### Cache and environment
+
+Pinned versions are kept in `<cache>/<version>/chaperone-<os>-<arch>`, where `<cache>` is the first of:
+
+| Location | When |
+|----------|------|
+| `$CHAPERONE_CACHE_DIR` | when set |
+| `$XDG_CACHE_HOME/chaperone` | when `XDG_CACHE_HOME` is set (an absolute path) |
+| `%LOCALAPPDATA%\chaperone\cache` | Windows |
+| `~/.cache/chaperone` | macOS and Linux (not `~/Library/Caches` on macOS, which the system may purge when the disk runs low: a purged pin would fail offline) |
+
+A download goes to a temporary file next to its final path and is renamed into place only once its checksum matches, so two runs at once (parallel CI jobs, a pre-push hook while you run a check) cannot leave a half-written binary.
+
+| Variable | Effect |
+|----------|--------|
+| `CHAPERONE_CACHE_DIR` | Where pinned versions are kept. |
+| `CHAPERONE_RELEASES_URL` | Download from a mirror laid out as `<url>/v<version>/<file>` (default `https://github.com/marckraw/chaperone-cli/releases/download`). |
+| `CHAPERONE_IGNORE_PIN=1` | Run the installed version even though the repository pins another one, with a note on stderr: to try an upgrade before pinning it, or to run a development build. |
+| `CHAPERONE_LAUNCHED` | Internal: tells a launched version not to launch again (it removes it from its environment, so the commands it runs do not inherit it). |
+
+The pinned version does not print "update available": the pin chose it. In a repository pinned to the version you have installed, the notice says how to move the pin (`chaperone pin <latest>`).
+
+### In CI
+
+Install exactly the pinned version, in one line, and run it:
+
+```yaml
+- name: Install Chaperone (the version .chaperone.json pins)
+  run: curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh
+- name: Run Chaperone
+  run: chaperone check --format ai
+```
+
+`CHAPERONE_VERSION=pinned` (or `install.sh --version pinned`, plus `--config <path>` for another config file) reads `chaperoneVersion` from `.chaperone.json`. The install script reads the pin only when asked, because it installs the machine's global `chaperone`. For the same reason it installs a pin older than 0.10, which has no launcher, only when `CI` is set: as a workstation's `chaperone` it would run that version in every repository, whatever each one pins. On a workstation, install the launcher instead (`sh install.sh`), which runs each repository's pin; `--version 0.9.0` still installs 0.9.0 explicitly. On a self-hosted runner that several repositories share, prefer the launcher too, or `--install-dir` a directory of the job's own. An installed launcher of any version works in CI as well: it downloads the pinned version on the first run.
 
 ## Usage
 
@@ -123,8 +206,14 @@ chaperone check --format json  # Machine-readable report
 chaperone check --since origin/master   # Custom rules only look at changed files
 
 chaperone analyze              # Extract rules from CLAUDE.md, AGENTS.md, ...
+
+chaperone pin                  # Pin this version in .chaperone.json
+chaperone pin 0.9.0            # Pin another version (downloaded and verified first)
+chaperone cache                # List the versions downloaded for pins
+chaperone cache clear          # Remove them
+
 chaperone help
-chaperone version
+chaperone version              # The version that runs here, and the launcher's
 ```
 
 ### `check` options
@@ -150,7 +239,7 @@ Unknown options, missing option values and unknown `--format` values are usage e
 |------|---------|
 | `0` | The check passed (warnings do not fail it) |
 | `1` | The check ran and found at least one error |
-| `2` | Chaperone could not do its job: invalid configuration, usage error (unknown option, bad value, unknown command, bad `--since` ref) or internal error. Nothing is reported as passed. |
+| `2` | Chaperone could not do its job: invalid configuration, usage error (unknown option, bad value, unknown command, bad `--since` ref), a pinned version that cannot be installed, or internal error. Nothing is reported as passed. |
 
 ### Output and environment
 
@@ -166,6 +255,7 @@ Unknown options, missing option values and unknown `--format` values are usage e
 
 ```json
 {
+  "chaperoneVersion": "0.10.0",
   "version": "1.0.0",
   "extends": ["chaperone/pure-functions", "./tools/chaperone/team-preset.json"],
   "include": ["src/**/*"],
@@ -181,6 +271,7 @@ Unknown options, missing option values and unknown `--format` values are usage e
 
 | Field | Description |
 |-------|-------------|
+| `chaperoneVersion` | The Chaperone version this repository runs (see [Pinning a version](#pinning-a-version)). Only in the project's own config, not in presets. |
 | `version` | Config format version (`"1.0.0"`). |
 | `extends` | Presets to build on, in order: `"chaperone/<name>"` for built-in presets, `"./path.json"` / `"../path.json"` for local files (a local preset's own `extends` resolve relative to that preset's file). |
 | `include` | Globs used for the "Files checked" count. Rules use their own `files` globs. |
@@ -222,7 +313,8 @@ Every config source — your file, local presets and built-in presets — is val
 - missing or mistyped fields, named with the rule id (`.chaperone.json › rules.custom[3].files (rule "no-console"): missing required field "files"`);
 - invalid regular expressions (compiled with the rule's flags) and invalid globs (unbalanced braces or brackets);
 - rules that define nothing to check, and import-boundary layers that allow imports from unknown layers;
-- unknown built-in presets, missing preset files and circular `extends`.
+- unknown built-in presets, missing preset files and circular `extends`;
+- a `chaperoneVersion` that is not an exact version (with a suggestion), a misspelled `chaperoneVersion` field, and a `chaperoneVersion` in a preset.
 
 **Warnings** are shown with the results and never change the exit code:
 
@@ -784,11 +876,13 @@ All three formats contain the same facts:
 
 ```yaml
 # GitHub Actions example
+- name: Install Chaperone (the version .chaperone.json pins)
+  run: curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh
 - name: Run Chaperone
   run: chaperone check --format ai
 ```
 
-Exit code 1 fails the job on errors; exit code 2 fails it on a broken configuration.
+Exit code 1 fails the job on errors; exit code 2 fails it on a broken configuration, or when the pinned version cannot be installed.
 
 ## Release Process
 
@@ -804,7 +898,7 @@ For user-facing/code changes, include a changeset:
 bun run changeset
 ```
 
-The PR check (`Changeset Check`) enforces this for changes under `src/`, `build.ts`, or `package.json`. The `CI` workflow runs `bun test`, Chaperone's own `check`, and the same check with the compiled binary.
+The PR check (`Changeset Check`) enforces this for changes under `src/`, `build.ts`, or `package.json`. The `CI` workflow runs `bun test`, Chaperone's own `check`, the same check with the compiled binary, and the launcher's tests against the compiled binary (`CHAPERONE_TEST_BINARY=bin/<binary> bun test src/launcher/compiled.test.ts`).
 
 ### 2) Version PRs
 
@@ -826,6 +920,8 @@ Release assets include:
 - `chaperone-linux-arm64`
 - `chaperone-windows-x64.exe`
 
+The launcher of every released version downloads pins by these names, and checks them against `SHA256SUMS.txt`: keep the names and the checksum file as they are.
+
 ## Development
 
 ```bash
@@ -837,6 +933,8 @@ bun run dev          # Run the CLI from source
 bun run build        # Build for the current platform
 bun run build:all    # Build for all platforms
 ```
+
+Running this checkout in a repository that pins a version runs the pinned version, as the installed binary would. To run the checkout itself there, set `CHAPERONE_IGNORE_PIN=1`. This repository does not pin a version: its own check runs the code under test.
 
 ## License
 

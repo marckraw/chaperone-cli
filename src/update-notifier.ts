@@ -64,18 +64,29 @@ export function isCacheStale(
   return Date.now() - cache.lastChecked > ttlMs;
 }
 
-export function formatUpdateNotice(current: string, latest: string): string {
+/**
+ * The update notice. In a repository that pins its version (`pinned`), installing a newer binary
+ * changes nothing there, so the notice says how to move the pin instead.
+ */
+export function formatUpdateNotice(current: string, latest: string, options: { pinned?: boolean } = {}): string {
   const yellow = "\x1b[33m";
   const cyan = "\x1b[36m";
   const bold = "\x1b[1m";
   const reset = "\x1b[0m";
 
+  const lines: Array<[plain: string, styled: string]> = [
+    [`Update available: ${current} → ${latest}`, `Update available: ${current} → ${bold}${cyan}${latest}${reset}`],
+    options.pinned
+      ? [`This repository pins ${current}: chaperone pin ${latest}`, `This repository pins ${current}: ${cyan}chaperone pin ${latest}${reset}`]
+      : [DOWNLOAD_URL, `${cyan}${DOWNLOAD_URL}${reset}`],
+  ];
+  const width = Math.max(39, ...lines.map(([plain]) => plain.length));
+
   return [
     "",
-    `${yellow}╭─────────────────────────────────────────╮${reset}`,
-    `${yellow}│${reset}  Update available: ${current} → ${bold}${cyan}${latest}${reset}  ${yellow}│${reset}`,
-    `${yellow}│${reset}  ${cyan}${DOWNLOAD_URL}${reset}  ${yellow}│${reset}`,
-    `${yellow}╰─────────────────────────────────────────╯${reset}`,
+    `${yellow}╭${"─".repeat(width + 2)}╮${reset}`,
+    ...lines.map(([plain, styled]) => `${yellow}│${reset} ${styled}${" ".repeat(width - plain.length)} ${yellow}│${reset}`),
+    `${yellow}╰${"─".repeat(width + 2)}╯${reset}`,
     "",
   ].join("\n");
 }
@@ -135,11 +146,11 @@ export async function fetchLatestVersion(): Promise<string | null> {
 
 // --- Entry points ---
 
-export function getUpdateNotification(): string | null {
+export function getUpdateNotification(options: { pinned?: boolean } = {}): string | null {
   const cache = readCache();
   const update = evaluateCache(cache, VERSION);
   if (!update) return null;
-  return formatUpdateNotice(update.current, update.latest);
+  return formatUpdateNotice(update.current, update.latest, options);
 }
 
 export async function refreshUpdateCache(): Promise<void> {

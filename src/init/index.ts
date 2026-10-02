@@ -6,6 +6,7 @@ import { detectProjectTools } from "./detector";
 import { writeConfig, getConfigFilename } from "./config-writer";
 import { inputList } from "./prompts";
 import { EXIT, parseArgs, UsageError } from "../utils/args";
+import { VERSION } from "../version";
 import type {
   ChaperoneConfig,
   DetectionResult,
@@ -71,6 +72,8 @@ function buildConfig(
   exclude: string[]
 ): ChaperoneConfig {
   return {
+    // New projects run the version that created their config (see "chaperone pin").
+    chaperoneVersion: VERSION,
     version: CONFIG_VERSION,
     project: {
       typescript: detection.typescript,

@@ -204,3 +204,27 @@ describe("loadConfigWithDiagnostics: shared presets", () => {
     expect(rule?.severity).toBe("error");
   });
 });
+
+describe("loadConfigWithDiagnostics: chaperoneVersion", () => {
+  test("a pin in the project's config loads without diagnostics", () => {
+    const cwd = makeProject({ ".chaperone.json": json({ chaperoneVersion: "0.10.0", version: "1.0.0" }) });
+    expect(loadConfigWithDiagnostics(cwd).diagnostics).toEqual([]);
+  });
+
+  test("a pin in a preset is an error: only the project's own config is read for it", () => {
+    const cwd = makeProject({
+      ".chaperone.json": json({ version: "1.0.0", extends: ["./team.json"] }),
+      "team.json": json({ chaperoneVersion: "0.10.0" }),
+    });
+    const error = loadError(cwd);
+    expect(error.diagnostics).toEqual([
+      {
+        level: "error",
+        source: "team.json",
+        path: "chaperoneVersion",
+        message: '"chaperoneVersion" only works in the project\'s own config file, where the launcher reads it; move it there',
+      },
+    ]);
+  });
+});
+

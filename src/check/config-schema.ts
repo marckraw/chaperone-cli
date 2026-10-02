@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { checkPinValue, isMisspelledPinKey, misspelledPinKeyMessage, PIN_FIELD } from "../launcher/pin";
 import { checkGlobSyntax } from "../utils/glob";
 import { closestMatch, didYouMean } from "../utils/suggest";
 import type { ConfigDiagnostic, CustomRule } from "./types";
@@ -301,6 +302,8 @@ const toolConfigSchema = z.object({
  */
 export const configFileSchema = z.object({
   $schema: z.string().optional(),
+  // Validated by checkPinValue (exact version, "did you mean" suggestions), not by zod.
+  [PIN_FIELD]: z.unknown().optional().describe("The Chaperone version this project runs, e.g. \"0.10.0\""),
   name: z.string().optional(),
   description: z.string().optional(),
   version: z.string().optional(),
@@ -842,9 +845,19 @@ export function validateConfigShape(raw: unknown, source: string): ConfigDiagnos
     }
   }
 
+  if (raw[PIN_FIELD] !== undefined) {
+    const pin = checkPinValue(raw[PIN_FIELD]);
+    if (!pin.ok) diagnostics.push({ level: "error", source, path: PIN_FIELD, message: pin.message });
+  }
+
   const unknownKeys: UnknownKey[] = [];
   collectUnknownKeys(configFileSchema, raw, [], unknownKeys);
   for (const unknown of unknownKeys) {
+    // A misspelled pin pins nothing, and the project would run whichever version is installed.
+    if (unknown.path.length === 1 && !(PIN_FIELD in raw) && isMisspelledPinKey(unknown.key)) {
+      diagnostics.push({ level: "error", source, path: unknown.key, message: misspelledPinKeyMessage(unknown.key) });
+      continue;
+    }
     const suggestion = closestMatch(unknown.key, unknown.known);
     diagnostics.push({
       level: "warning",

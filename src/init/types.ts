@@ -48,6 +48,8 @@ export interface ProjectConfig {
 }
 
 export interface ChaperoneConfig {
+  /** The Chaperone version that wrote the config, pinned for the project */
+  chaperoneVersion: string;
   version: string;
   project: ProjectConfig;
   rules: Record<string, unknown>;

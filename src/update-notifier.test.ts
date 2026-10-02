@@ -130,4 +130,18 @@ describe("formatUpdateNotice", () => {
       "https://github.com/marckraw/chaperone-cli/releases/latest",
     );
   });
+
+  test("in a pinned repository, says how to move the pin instead", () => {
+    const notice = formatUpdateNotice("1.0.0", "2.0.0", { pinned: true });
+    expect(notice).toContain("This repository pins 1.0.0:");
+    expect(notice).toContain("chaperone pin 2.0.0");
+    expect(notice).not.toContain("releases/latest");
+  });
+
+  test("the box fits its longest line", () => {
+    // eslint-disable-next-line no-control-regex
+    const plain = formatUpdateNotice("1.0.0", "2.0.0").replace(/\x1b\[[0-9;]*m/g, "");
+    const widths = new Set(plain.split("\n").filter(Boolean).map((line) => line.length));
+    expect(widths.size).toBe(1);
+  });
 });
