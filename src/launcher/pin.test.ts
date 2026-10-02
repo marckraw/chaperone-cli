@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   checkPinValue,
+  defaultFromConfigText,
+  defaultFromEnv,
   formatPinHint,
+  isMisspelledDefaultKey,
   isMisspelledPinKey,
   normalizeVersion,
   readPin,
@@ -132,5 +135,101 @@ describe("the hint to pin", () => {
     const hint = formatPinHint("0.10.0", ".chaperone.json");
     expect(hint).toBe('Tip: pin Chaperone for this repository with "chaperone pin" (writes "chaperoneVersion": "0.10.0" to .chaperone.json).');
     expect(hint).not.toContain("\n");
+  });
+
+  test("names the machine default when it chose the version, and the version to pin", () => {
+    const file = formatPinHint("0.10.1", ".chaperone.json", { origin: { kind: "file", label: "~/.config/chaperone/config.json" } });
+    expect(file).toBe(
+      'Tip: this repository runs the machine default (Chaperone 0.10.1, in ~/.config/chaperone/config.json); pin it with "chaperone pin 0.10.1" (writes "chaperoneVersion": "0.10.1" to .chaperone.json).'
+    );
+    const env = formatPinHint("0.10.1", ".chaperone.json", { origin: { kind: "env" } });
+    expect(env).toContain("(Chaperone 0.10.1, from CHAPERONE_DEFAULT_VERSION)");
+    expect(env).not.toContain("\n");
+  });
+});
+
+describe("defaultFromEnv: CHAPERONE_DEFAULT_VERSION", () => {
+  test("unset or empty: the config file decides", () => {
+    expect(defaultFromEnv(undefined)).toBeNull();
+    expect(defaultFromEnv("")).toBeNull();
+  });
+
+  test("an exact version, with or without a leading v", () => {
+    expect(defaultFromEnv("0.7.1")).toEqual({ kind: "set", version: "0.7.1", origin: { kind: "env" } });
+    expect(defaultFromEnv("v0.7.1")).toEqual({ kind: "set", version: "0.7.1", origin: { kind: "env" } });
+  });
+
+  test("anything else is invalid, by the pin's own parser, naming the variable", () => {
+    expect(defaultFromEnv("latest")).toEqual({
+      kind: "invalid",
+      message: 'CHAPERONE_DEFAULT_VERSION must be an exact version, such as "0.10.0" (got "latest")',
+      origin: { kind: "env" },
+    });
+    const range = defaultFromEnv("^0.7");
+    expect(range?.kind === "invalid" && range.message).toBe(
+      'CHAPERONE_DEFAULT_VERSION must be an exact version, such as "0.10.0", not a range (got "^0.7") (did you mean "0.7.0"?)'
+    );
+    expect(defaultFromEnv(" ")?.kind).toBe("invalid");
+  });
+});
+
+describe("defaultFromConfigText: the machine config file", () => {
+  const label = "~/.config/chaperone/config.json";
+  const origin = { kind: "file", label } as const;
+  const read = (config: unknown) => defaultFromConfigText(JSON.stringify(config), label);
+  const message = (config: unknown) => {
+    const result = read(config);
+    return result.kind === "invalid" ? result.message : null;
+  };
+
+  test("no file, or no field: no default", () => {
+    expect(defaultFromConfigText(null, label)).toEqual({ kind: "none" });
+    expect(read({})).toEqual({ kind: "none" });
+    expect(read({ someOtherSetting: true })).toEqual({ kind: "none" });
+  });
+
+  test("reads defaultVersion, keeping other fields out of it", () => {
+    expect(read({ defaultVersion: "v0.7.1", someOtherSetting: true })).toEqual({ kind: "set", version: "0.7.1", origin });
+  });
+
+  test("an invalid value is invalid, with the pin parser's message for the field", () => {
+    expect(message({ defaultVersion: "latest" })).toBe('"defaultVersion" must be an exact version, such as "0.10.0" (got "latest")');
+    expect(message({ defaultVersion: "~0.7.1" })).toContain('not a range (got "~0.7.1") (did you mean "0.7.1"?)');
+    expect(message({ defaultVersion: 0.7 })).toBe('"defaultVersion" must be a string with an exact version, such as "0.10.0" (got number)');
+    expect(message({ defaultVersion: null })).toContain("(got null)");
+  });
+
+  test("a misspelled field, or the project's pin field, sets nothing and is invalid", () => {
+    expect(message({ default_version: "0.7.1" })).toBe(
+      'unknown field "default_version" (did you mean "defaultVersion"?): a misspelled machine default sets nothing'
+    );
+    expect(message({ chaperoneVersion: "0.7.1" })).toBe(
+      'unknown field "chaperoneVersion" (did you mean "defaultVersion"?): "chaperoneVersion" pins a repository, in its own .chaperone.json'
+    );
+    // The real field wins over a misspelled one
+    expect(read({ defaultVersion: "0.7.1", default_version: "0.6.0" })).toEqual({ kind: "set", version: "0.7.1", origin });
+  });
+
+  test("a file that is not a JSON object is invalid, never 'no default'", () => {
+    const broken = defaultFromConfigText("{ nope", label);
+    expect(broken).toMatchObject({ kind: "invalid", origin });
+    expect(broken.kind === "invalid" && broken.message).toStartWith("the file is not valid JSON (");
+    expect(defaultFromConfigText("", label).kind).toBe("invalid");
+    expect(message(["0.7.1"])).toBe('the file must hold a JSON object, such as { "defaultVersion": "0.10.0" }');
+    expect(message("0.7.1")).toContain("must hold a JSON object");
+  });
+});
+
+describe("isMisspelledDefaultKey", () => {
+  test("catches near misses of defaultVersion, and the project's pin field", () => {
+    for (const key of ["default_version", "default-version", "DefaultVersion", "defaultversion", "defaultVerison", "defaultVersions", "chaperoneVersion", "chaperone_version"]) {
+      expect(isMisspelledDefaultKey(key)).toBe(true);
+    }
+  });
+
+  test("leaves the real field and unrelated fields alone", () => {
+    for (const key of ["defaultVersion", "version", "default", "defaults", "cacheDir", "$schema", "releasesUrl"]) {
+      expect(isMisspelledDefaultKey(key)).toBe(false);
+    }
   });
 });

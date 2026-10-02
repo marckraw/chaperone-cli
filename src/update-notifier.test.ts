@@ -138,6 +138,17 @@ describe("formatUpdateNotice", () => {
     expect(notice).not.toContain("releases/latest");
   });
 
+  test("where the machine default chose the version, says how to move the default instead", () => {
+    // Installing a newer chaperone changes nothing there: the default decides.
+    const notice = formatUpdateNotice("1.0.0", "2.0.0", { machineDefault: true });
+    expect(notice).toContain("The machine default is 1.0.0:");
+    expect(notice).toContain("chaperone default 2.0.0");
+    expect(notice).not.toContain("releases/latest");
+    // eslint-disable-next-line no-control-regex
+    const widths = new Set(notice.replace(/\x1b\[[0-9;]*m/g, "").split("\n").filter(Boolean).map((line) => line.length));
+    expect(widths.size).toBe(1);
+  });
+
   test("the box fits its longest line", () => {
     // eslint-disable-next-line no-control-regex
     const plain = formatUpdateNotice("1.0.0", "2.0.0").replace(/\x1b\[[0-9;]*m/g, "");

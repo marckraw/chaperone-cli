@@ -1,6 +1,6 @@
 /**
- * Where pinned versions come from and where they are kept. Pure: the environment, platform and
- * home directory are passed in.
+ * Where pinned versions come from and where they are kept, and where the machine's config file
+ * is. Pure: the environment, platform and home directory are passed in.
  */
 
 import { posix, win32 } from "node:path";
@@ -51,6 +51,39 @@ export function resolveCacheRoot({ env, platform, home, cwd }: CacheLocationInpu
     return path.join(localAppData, "chaperone", "cache");
   }
   return path.join(home, ".cache", "chaperone");
+}
+
+export interface ConfigLocationInput {
+  env: Readonly<Record<string, string | undefined>>;
+  platform: string;
+  home: string;
+}
+
+/**
+ * The machine's config file, which holds the machine default (`"defaultVersion"`), found the way
+ * the cache root is:
+ * 1. `$XDG_CONFIG_HOME/chaperone/config.json`, when XDG_CONFIG_HOME is an absolute path (any
+ *    platform);
+ * 2. Windows: `%APPDATA%\chaperone\config.json`;
+ * 3. macOS and Linux: `~/.config/chaperone/config.json`.
+ */
+export function resolveMachineConfigPath({ env, platform, home }: ConfigLocationInput): string {
+  const path = platform === "win32" ? win32 : posix;
+  const xdg = env["XDG_CONFIG_HOME"];
+  if (xdg && path.isAbsolute(xdg)) return path.join(xdg, "chaperone", "config.json");
+
+  if (platform === "win32") {
+    const appData = env["APPDATA"] || path.join(home, "AppData", "Roaming");
+    return path.join(appData, "chaperone", "config.json");
+  }
+  return path.join(home, ".config", "chaperone", "config.json");
+}
+
+/** A path for messages: `~/.config/...` for a path inside the home directory (outside Windows). */
+export function homeRelativePath(path: string, home: string, platform: string): string {
+  if (platform === "win32" || home === "" || home === "/") return path;
+  const prefix = home.endsWith("/") ? home : `${home}/`;
+  return path.startsWith(prefix) ? `~/${path.slice(prefix.length)}` : path;
 }
 
 /** `<root>/<version>/<asset>`: one directory per version, so clearing one version is one rmdir. */

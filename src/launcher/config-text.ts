@@ -1,10 +1,11 @@
 /**
  * Writing the pin into a config file's text, keeping everything else as it was written
- * (formatting, key order, indentation). Pure.
+ * (formatting, key order, indentation), and the machine default into the machine's config file.
+ * Pure.
  */
 
 import { isDeepStrictEqual } from "node:util";
-import { isMisspelledPinKey, PIN_FIELD } from "./pin";
+import { DEFAULT_FIELD, isMisspelledDefaultKey, isMisspelledPinKey, PIN_FIELD } from "./pin";
 
 interface Member {
   key: string;
@@ -165,4 +166,57 @@ export function setPinInConfigText(text: string, version: string): PinEdit {
       "$schema" in expected ? { $schema: expected["$schema"], ...expected } : expected;
     return `${JSON.stringify(ordered, null, detectIndent(text))}\n`;
   }
+}
+
+export interface DefaultEdit {
+  /** The file's new text (the old one when nothing changes) */
+  text: string;
+  /** `"defaultVersion"` before the edit, or a misspelling's value, as written */
+  previous: unknown;
+  /** Setting: the misspelled key that was replaced (`default_version`, ...) */
+  replacedKey: string | null;
+  /** Clearing: the keys removed, `"defaultVersion"` and its misspellings */
+  removed: string[];
+  /** The file already says this: nothing to write */
+  unchanged: boolean;
+}
+
+/**
+ * Set `"defaultVersion": "<version>"` in the machine's config file, or with `version` null remove
+ * it, keeping every other field. `text` is null when there is no file yet.
+ *
+ * Setting replaces the field in place, or a misspelled one when the field is missing; otherwise
+ * the field becomes the first key. Clearing also removes misspellings, which would otherwise make
+ * the default invalid. The file is written as formatted JSON, in its own indentation.
+ *
+ * @throws {SyntaxError} when `text` is not valid JSON
+ * @throws {Error} when the file is not a JSON object
+ */
+export function setDefaultInConfigText(text: string | null, version: string | null): DefaultEdit {
+  const parsed: unknown = text === null ? {} : JSON.parse(text);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("the file is not a JSON object");
+  }
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  const field = entries.find(([key]) => key === DEFAULT_FIELD);
+  const misspelled = entries.filter(([key]) => isMisspelledDefaultKey(key));
+  const previous = field ? field[1] : misspelled[0]?.[1];
+  // fromEntries defines own properties, so even a "__proto__" key is kept as data.
+  const format = (kept: Array<[string, unknown]>) =>
+    `${JSON.stringify(Object.fromEntries(kept), null, text === null ? "  " : detectIndent(text))}\n`;
+
+  if (version === null) {
+    const removed = [...(field ? [DEFAULT_FIELD] : []), ...misspelled.map(([key]) => key)];
+    if (removed.length === 0) return { text: text ?? format([]), previous, replacedKey: null, removed, unchanged: true };
+    return { text: format(entries.filter(([key]) => !removed.includes(key))), previous, replacedKey: null, removed, unchanged: false };
+  }
+
+  if (text !== null && field?.[1] === version) return { text, previous, replacedKey: null, removed: [], unchanged: true };
+  const replacedKey = field ? null : (misspelled[0]?.[0] ?? null);
+  const target = field ? DEFAULT_FIELD : replacedKey;
+  const kept: Array<[string, unknown]> =
+    target === null
+      ? [[DEFAULT_FIELD, version], ...entries]
+      : entries.map(([key, value]): [string, unknown] => (key === target ? [DEFAULT_FIELD, version] : [key, value]));
+  return { text: format(kept), previous, replacedKey, removed: [], unchanged: false };
 }

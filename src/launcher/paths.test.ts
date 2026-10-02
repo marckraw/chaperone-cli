@@ -1,7 +1,62 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cachedBinaryPath, findChecksum, releaseAsset, releaseFileUrl, resolveCacheRoot } from "./paths";
+import {
+  cachedBinaryPath,
+  findChecksum,
+  homeRelativePath,
+  releaseAsset,
+  releaseFileUrl,
+  resolveCacheRoot,
+  resolveMachineConfigPath,
+} from "./paths";
+
+describe("resolveMachineConfigPath (the machine default's file)", () => {
+  const home = "/home/ada";
+
+  test("defaults to ~/.config/chaperone/config.json on Linux and macOS", () => {
+    expect(resolveMachineConfigPath({ env: {}, platform: "linux", home })).toBe("/home/ada/.config/chaperone/config.json");
+    expect(resolveMachineConfigPath({ env: {}, platform: "darwin", home: "/Users/ada" })).toBe(
+      "/Users/ada/.config/chaperone/config.json"
+    );
+  });
+
+  test("follows an absolute XDG_CONFIG_HOME and ignores a relative one", () => {
+    expect(resolveMachineConfigPath({ env: { XDG_CONFIG_HOME: "/etc/ada" }, platform: "linux", home })).toBe(
+      "/etc/ada/chaperone/config.json"
+    );
+    expect(resolveMachineConfigPath({ env: { XDG_CONFIG_HOME: "conf" }, platform: "darwin", home })).toBe(
+      "/home/ada/.config/chaperone/config.json"
+    );
+  });
+
+  test("uses %APPDATA% on Windows, and an absolute XDG_CONFIG_HOME there too", () => {
+    const winHome = "C:\\Users\\ada";
+    expect(resolveMachineConfigPath({ env: { APPDATA: "D:\\Roaming" }, platform: "win32", home: winHome })).toBe(
+      "D:\\Roaming\\chaperone\\config.json"
+    );
+    expect(resolveMachineConfigPath({ env: {}, platform: "win32", home: winHome })).toBe(
+      "C:\\Users\\ada\\AppData\\Roaming\\chaperone\\config.json"
+    );
+    expect(resolveMachineConfigPath({ env: { XDG_CONFIG_HOME: "C:\\xdg", APPDATA: "D:\\Roaming" }, platform: "win32", home: winHome })).toBe(
+      "C:\\xdg\\chaperone\\config.json"
+    );
+  });
+});
+
+describe("homeRelativePath", () => {
+  test("shows a path inside the home directory as ~/...", () => {
+    expect(homeRelativePath("/home/ada/.config/chaperone/config.json", "/home/ada", "linux")).toBe("~/.config/chaperone/config.json");
+    expect(homeRelativePath("/home/ada/.config/chaperone/config.json", "/home/ada/", "darwin")).toBe("~/.config/chaperone/config.json");
+  });
+
+  test("leaves other paths, a sibling that shares the prefix, and Windows paths alone", () => {
+    expect(homeRelativePath("/etc/chaperone/config.json", "/home/ada", "linux")).toBe("/etc/chaperone/config.json");
+    expect(homeRelativePath("/home/adam/.config/x.json", "/home/ada", "linux")).toBe("/home/adam/.config/x.json");
+    expect(homeRelativePath("/x/config.json", "/", "linux")).toBe("/x/config.json");
+    expect(homeRelativePath("C:\\Users\\ada\\x.json", "C:\\Users\\ada", "win32")).toBe("C:\\Users\\ada\\x.json");
+  });
+});
 
 describe("resolveCacheRoot", () => {
   const home = "/home/ada";

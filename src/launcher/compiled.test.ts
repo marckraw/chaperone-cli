@@ -16,6 +16,7 @@ import {
   ASSET,
   cachedFiles,
   fakeBinary,
+  machineConfigPath,
   offlineUrl,
   report,
   runChaperone,
@@ -83,6 +84,24 @@ describe("the compiled binary", () => {
     const result = await run(sandbox(null), offlineUrl(), ["check", "--format", "json"]);
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).success).toBe(true);
+  }, SLOW);
+
+  compiledTest("sets a machine default, then runs it where nothing is pinned", async () => {
+    const box = sandbox(null);
+    const server = startReleaseServer({ "0.8.0": { binary: fakeBinary("0.8.0") } });
+    servers.push(server);
+
+    const set = await run(box, server.url, ["default", "0.8.0"]);
+    expect(set.exitCode).toBe(0);
+    expect(set.stderr).toContain(`verified ${ASSET} 0.8.0`);
+    expect(JSON.parse(readFileSync(machineConfigPath(box), "utf-8"))).toEqual({ defaultVersion: "0.8.0" });
+
+    const result = await run(box, offlineUrl(), ["check", "two words"], { env: { FAKE_EXIT: "1" } });
+    expect(result.exitCode).toBe(1);
+    expect(report(result)).toMatchObject({ label: "0.8.0", argv: ["check", "two words"], pid: result.pid });
+
+    const version = await run(box, offlineUrl(), ["--version"]);
+    expect(version.stdout).toStartWith("chaperone v0.8.0 (machine default in ~/.config/chaperone/config.json, launched by v");
   }, SLOW);
 
   compiledTest("pins its own version", async () => {
