@@ -41,3 +41,11 @@ jobs:
             "$binary" --version
             "$binary" check --format json > /dev/null
           done
+
+      - name: The launcher in the compiled binary (download, verify, exec)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in bin/chaperone-*; do
+            CHAPERONE_TEST_BINARY="$binary" bun test src/launcher/compiled.test.ts
+          done
