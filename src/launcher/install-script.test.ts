@@ -1,6 +1,7 @@
 /**
  * scripts/install.sh against a local release server. HOME is a temporary directory, so the
- * script's fallback to ~/.local/bin can never reach a real installation.
+ * script's fallback to ~/.local/bin can never reach a real installation, and CI is unset unless a
+ * test sets it.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -14,6 +15,8 @@ const hasCurl = Bun.which("curl") !== null && process.platform !== "win32";
 const scriptTest = hasCurl ? test : test.skip;
 // Each test starts several processes: give a slow CI runner room (bun's default is 5 s).
 const SLOW = 20_000;
+/** As on a CI runner, where a pin from before 0.10 is installed as it is. */
+const ON_CI = { CI: "true" };
 
 const servers: ReleaseServer[] = [];
 afterEach(() => {
@@ -23,6 +26,7 @@ afterEach(() => {
 
 async function install(cwd: string, args: string[], env: Record<string, string> = {}) {
   const server = startReleaseServer({
+    "0.10.0": { binary: fakeBinary("0.10.0") },
     "0.8.0": { binary: fakeBinary("0.8.0") },
     "0.7.1": { binary: fakeBinary("0.7.1") },
   });
@@ -44,32 +48,47 @@ const project = (config: string) => makeProject({ ".chaperone.json": config });
 
 describe("install.sh --version pinned", () => {
   scriptTest("installs the version .chaperone.json pins", async () => {
-    const cwd = project('{\n  "chaperoneVersion": "0.8.0",\n  "version": "1.0.0"\n}\n');
+    const cwd = project('{\n  "chaperoneVersion": "0.10.0",\n  "version": "1.0.0"\n}\n');
     const run = await install(cwd, ["--version", "pinned"]);
     expect(run.stderr).toBe("");
     expect(run.exitCode).toBe(0);
-    expect(run.stdout).toContain("Installing chaperone v0.8.0 (pinned in .chaperone.json)");
-    expect(run.installed()).toBe(fakeBinary("0.8.0"));
-    expect(run.requests).toEqual(["/v0.8.0/SHA256SUMS.txt", `/v0.8.0/${ASSET}`]);
+    expect(run.stdout).toContain("Installing chaperone v0.10.0 (pinned in .chaperone.json)");
+    expect(run.installed()).toBe(fakeBinary("0.10.0"));
+    expect(run.requests).toEqual(["/v0.10.0/SHA256SUMS.txt", `/v0.10.0/${ASSET}`]);
   }, SLOW);
 
   scriptTest("CHAPERONE_VERSION=pinned, a v-prefixed pin, and a key split from its value", async () => {
-    const cwd = project('{ "version": "1.0.0",\n  "chaperoneVersion":\n    "v0.7.1" }');
+    const cwd = project('{ "version": "1.0.0",\n  "chaperoneVersion":\n    "v0.10.0" }');
     const run = await install(cwd, [], { CHAPERONE_VERSION: "pinned" });
     expect(run.exitCode).toBe(0);
-    expect(run.installed()).toBe(fakeBinary("0.7.1"));
+    expect(run.installed()).toBe(fakeBinary("0.10.0"));
   }, SLOW);
 
   scriptTest("--config reads another file", async () => {
     const cwd = project('{ "chaperoneVersion": "0.8.0" }');
-    writeFileSync(join(cwd, "ci.json"), '{ "chaperoneVersion": "0.7.1" }');
+    writeFileSync(join(cwd, "ci.json"), '{ "chaperoneVersion": "0.10.0" }');
     const run = await install(cwd, ["--version", "pinned", "--config", "ci.json"]);
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain("(pinned in ci.json)");
+    expect(run.installed()).toBe(fakeBinary("0.10.0"));
+  }, SLOW);
+
+  scriptTest("outside CI, refuses a pin older than 0.10: it has no launcher, and would run in every repository", async () => {
+    const run = await install(project('{ "chaperoneVersion": "0.8.0" }'), ["--version", "pinned"]);
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr).toContain("Not installing chaperone 0.8.0: it predates version pinning");
+    expect(run.stderr).toContain("To install 0.8.0 here anyway: --version 0.8.0");
+    expect(run.requests).toEqual([]);
+  }, SLOW);
+
+  scriptTest("in CI, installs a pin older than 0.10 as it is, with a note", async () => {
+    const run = await install(project('{ "chaperoneVersion": "v0.7.1" }'), ["--version", "pinned"], ON_CI);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("Note: chaperone v0.7.1 predates version pinning");
     expect(run.installed()).toBe(fakeBinary("0.7.1"));
   }, SLOW);
 
-  scriptTest("fails without a pin, with an invalid pin, or without a config", async () => {
+  scriptTest("fails without a pin, with an invalid pin, with two pins, or without a config", async () => {
     const noPin = await install(project('{ "version": "1.0.0" }'), ["--version", "pinned"]);
     expect(noPin.exitCode).toBe(1);
     expect(noPin.stderr).toContain('has no "chaperoneVersion"');
@@ -78,14 +97,26 @@ describe("install.sh --version pinned", () => {
     expect(range.exitCode).toBe(1);
     expect(range.stderr).toContain('is "^0.8.0", not an exact version');
 
+    // A pre-release the launcher would refuse is refused here too
+    const prerelease = await install(project('{ "chaperoneVersion": "0.10.0-rc..1" }'), ["--version", "pinned"]);
+    expect(prerelease.exitCode).toBe(1);
+    expect(prerelease.stderr).toContain("not an exact version");
+
+    const twoPins = await install(
+      project('{ "chaperoneVersion": "0.10.0", "project": { "chaperoneVersion": "0.8.0" } }'),
+      ["--version", "pinned"]
+    );
+    expect(twoPins.exitCode).toBe(1);
+    expect(twoPins.stderr).toContain('has 2 "chaperoneVersion" keys');
+
     const missing = await install(makeProject(), ["--version", "pinned"]);
     expect(missing.exitCode).toBe(1);
     expect(missing.stderr).toContain(".chaperone.json not found");
     expect(missing.requests).toEqual([]);
   }, SLOW);
 
-  scriptTest("an explicit version still wins", async () => {
-    const run = await install(project('{ "chaperoneVersion": "0.8.0" }'), ["--version", "0.7.1"]);
+  scriptTest("an explicit version still wins, also one older than 0.10", async () => {
+    const run = await install(project('{ "chaperoneVersion": "0.10.0" }'), ["--version", "0.7.1"]);
     expect(run.exitCode).toBe(0);
     expect(run.installed()).toBe(fakeBinary("0.7.1"));
   }, SLOW);

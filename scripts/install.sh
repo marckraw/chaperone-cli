@@ -18,6 +18,9 @@ Usage:
   --version pinned   Install the version the project pins: "chaperoneVersion"
                      in .chaperone.json (or the file given with --config).
                      Meant for CI: the job then runs exactly the pinned version.
+                     A pin older than 0.10 (which has no launcher) is installed
+                     only when CI is set: as a workstation's chaperone it would
+                     run that version in every repository.
 
 Examples:
   sh install.sh
@@ -108,16 +111,46 @@ if [ "${VERSION}" = "pinned" ]; then
     echo "Run this from the project root, or pass --config <path>." >&2
     exit 1
   fi
-  PINNED="$(tr '\n\r' '  ' < "${CONFIG}" | sed -n 's/.*"chaperoneVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  FLAT="$(tr '\n\r' '  ' < "${CONFIG}")"
+  KEYS="$(printf '%s\n' "${FLAT}" | grep -o '"chaperoneVersion"[[:space:]]*:' | wc -l | tr -d ' ')"
+  if [ "${KEYS}" -gt 1 ]; then
+    echo "Cannot install the pinned version: ${CONFIG} has ${KEYS} \"chaperoneVersion\" keys." >&2
+    echo "The pin is the one at the top level of the file; remove the others." >&2
+    exit 1
+  fi
+  PINNED="$(printf '%s\n' "${FLAT}" | sed -n 's/.*"chaperoneVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   if [ -z "${PINNED}" ]; then
     echo "Cannot install the pinned version: ${CONFIG} has no \"chaperoneVersion\"." >&2
     echo "Pin one with \"chaperone pin\", or install a version with --version <version>." >&2
     exit 1
   fi
-  if ! printf '%s\n' "${PINNED}" | grep -Eq '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'; then
+  # The launcher's rule: MAJOR.MINOR.PATCH, an optional pre-release, an optional leading v.
+  if ! printf '%s\n' "${PINNED}" | grep -Eq '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
     echo "Cannot install the pinned version: \"chaperoneVersion\" in ${CONFIG} is \"${PINNED}\", not an exact version such as \"0.10.0\"." >&2
     exit 1
   fi
+
+  # Versions before 0.10 have no launcher. Installed as a machine's chaperone, one runs that version
+  # in every repository, whatever each pins. A CI job's machine is thrown away; a workstation is not.
+  BARE="${PINNED#v}"
+  MAJOR="${BARE%%.*}"
+  MINOR="${BARE#*.}"
+  MINOR="${MINOR%%.*}"
+  if [ "${MAJOR}" -eq 0 ] && [ "${MINOR}" -lt 10 ]; then
+    case "${CI:-}" in
+      ""|0|false|FALSE|False)
+        echo "Not installing chaperone ${PINNED}: it predates version pinning, so as this machine's chaperone it" >&2
+        echo "would run ${PINNED} in every repository, whatever each one pins." >&2
+        echo "Install the launcher instead (sh install.sh, no version): it runs ${PINNED} here, and each other" >&2
+        echo "repository's own pin there. In CI (CI is set) the pinned version is installed as it is." >&2
+        echo "To install ${PINNED} here anyway: --version ${PINNED}" >&2
+        exit 1
+        ;;
+    esac
+    echo "Note: chaperone ${PINNED} predates version pinning. Fine for this CI job; on a runner that other"
+    echo "repositories share, it would run ${PINNED} for them too."
+  fi
+
   VERSION="${PINNED}"
   PINNED_FROM=" (pinned in ${CONFIG})"
 fi
