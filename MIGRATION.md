@@ -1,8 +1,54 @@
-# Migrating to Chaperone 0.9
+# Migrating to Chaperone 0.10
 
-0.9 adds four rule types and two fixes. A config that passes on 0.8 keeps working; one fix can turn up violations that were always there (below). Coming from 0.7.x? Read [Coming from 0.7.x](#coming-from-07x-what-08-changed) too: 0.8's changes apply to you as well.
+0.10 lets every repository pin the Chaperone it runs. Until now `chaperone` was one binary shared by every repository on a machine: upgrading it changed every repository's checks at once, so some repositories wrapped it in a script that downloads a fixed version. Now one field in `.chaperone.json` does that, and the `chaperone` you install runs whatever version each repository pins.
 
-## What's new in 0.9
+The checks themselves do not change: a config that passes on 0.9 passes on 0.10. Coming from 0.8 or older? Read [Coming from 0.8.x](#coming-from-08x-what-09-changed) and [Coming from 0.7.x](#coming-from-07x-what-08-changed) too: their changes apply to you as well.
+
+## What's new in 0.10
+
+- **`"chaperoneVersion": "0.10.0"`** in `.chaperone.json` pins the version. An exact version (`v0.10.0` is read as `0.10.0`); a range, `latest` or a misspelled field name is an error (exit 2) with a suggestion.
+- **The installed `chaperone` is a launcher.** When the pin names another version, it downloads that release once, checks it against the release's `SHA256SUMS.txt`, caches it in `~/.cache/chaperone/<version>/` and runs it with the same arguments, stdio and environment, passing its exit code (and signals) through. It works offline once a version is cached, and it never runs another version in its place: when the pinned one is unavailable, the run fails with exit code 2 and says what to do.
+- **`chaperone pin [version]`** writes the field; **`chaperone cache`** lists and clears downloaded versions; **`chaperone --version`** names the version that runs here and the launcher's.
+- **`install.sh --version pinned`** (or `CHAPERONE_VERSION=pinned`) installs the version a repository pins: one line in CI.
+- **`chaperone init`** pins new configs to the version that wrote them.
+
+See [Pinning a version](./README.md#pinning-a-version) for everything else (the cache, the environment variables, what happens offline).
+
+## Upgrading to 0.10
+
+1. **Install the launcher once:** `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.0 sh`. This is the last upgrade that changes what every repository runs: a repository that pins keeps its version from now on. Until a repository pins, it runs 0.10.0.
+2. **Pin each repository:** `chaperone pin` pins 0.10.0; `chaperone pin 0.9.0` keeps the version a repository runs today, to upgrade it later on its own. Commit `.chaperone.json`.
+3. **Install the pinned version in CI:** replace `CHAPERONE_VERSION: v0.9.0` (or a hard-coded download) with `curl -fsSL .../install.sh | CHAPERONE_VERSION=pinned sh`. The field is then the only place the version lives.
+4. **Delete wrapper scripts,** once the pinned version demonstrably runs in their place (next section).
+
+Upgrading a repository later is `chaperone pin <version>`: the launcher downloads the version, and the diff is one line that CI checks.
+
+## Replacing a wrapper script
+
+Some repositories already pin Chaperone with a script. accent.'s `scripts/chaperone.mjs` is the model: a `VERSION` constant, a download of the release binary into `node_modules/.cache`, a check against `SHA256SUMS.txt`, and `pnpm chaperone` running `node scripts/chaperone.mjs check`. The launcher does all of that, so the script can go, but only after proving that `chaperone` runs the same version the script did. Replace the mechanism first, at the script's version, and upgrade afterwards, so each step can be checked on its own:
+
+1. Read the version the script pins (accent.'s: `const VERSION = "0.8.0"`), and pin the same one: `chaperone pin 0.8.0`.
+2. Prove the same version runs:
+   - `node scripts/chaperone.mjs --version` and `chaperone --version` must name the same version (`chaperone v0.8.0`, and `chaperone v0.8.0 (pinned in .chaperone.json, launched by v0.10.0)`).
+   - `node scripts/chaperone.mjs check --format json > /tmp/script.json; echo $?` and `chaperone check --format json > /tmp/pinned.json; echo $?` must exit with the same code and report the same results: `diff <(jq -S '.results' /tmp/script.json) <(jq -S '.results' /tmp/pinned.json)` prints nothing.
+   (Versions before 0.10 report `unknown field "chaperoneVersion" is ignored` among the configuration warnings; that warning is the only expected difference, in `.diagnostics`.)
+3. Point everything at `chaperone`: package.json scripts (`"chaperone": "chaperone check"`), git hooks and CI (`CHAPERONE_VERSION=pinned`). Then delete the script and its cache (`node_modules/.cache/chaperone`).
+4. Now upgrade: `chaperone pin 0.10.0`, run `chaperone check`, and fix what newly fails (for 0.8 → 0.10, see [Coming from 0.8.x](#coming-from-08x-what-09-changed)).
+
+## What might newly fail in 0.10
+
+- **Nothing in the checks.** Existing rules report exactly what they reported on 0.9.
+- A config with an invalid `chaperoneVersion`, a misspelled one (`chaperone_version`), or one in a preset fails with exit code 2. None of these could exist before 0.10, so only a pin you add can trigger them.
+- A pin of a version before 0.10 runs that version, which warns `unknown field "chaperoneVersion" is ignored`. Warnings never change the exit code.
+- `chaperone --version` adds a note in parentheses, and in a pinned repository its first version is the pinned one: `chaperone v0.9.0 (pinned in .chaperone.json, launched by v0.10.0)`. The output still starts with `chaperone v<version>`.
+- `chaperone help` runs in the pinned version, so a repository pinned to 0.9 shows 0.9's help (without `pin` and `cache`, which work anyway).
+- A repository that pins a version the machine has not cached yet needs the network on its first run. Offline, the run fails with exit code 2 instead of running another version.
+
+## Coming from 0.8.x: what 0.9 changed
+
+Skip this part if you are on 0.9 already. 0.9 added four rule types and two fixes. A config that passes on 0.8 keeps working; one fix can turn up violations that were always there (below).
+
+### What's new in 0.9
 
 Four rule types for what review lets through, each one a few lines of config instead of a script:
 
@@ -20,7 +66,7 @@ Two fixes:
 - **The whole report through a pipe.** The compiled binary could lose everything past the first 64 KB of a report when the reader was slower than the write (`chaperone check --format json | jq` read half a document). The report is now written in full.
 - **symbol-reference: a name in a comment is not a reference.** A test that only mentions an export in a comment used to satisfy rules such as "every pure function is tested". Comments in the target files are now ignored; strings still count (`describe("formatPrice", …)`).
 
-## What might newly fail
+### What might newly fail after 0.9
 
 - **symbol-reference rules** can report new "not referenced" violations: an export that a target file only named in a comment (often a test's header comment) was never really referenced. Reference it for real, usually by calling it in the test. Do not add a string or a comment to satisfy the rule. On one 2,000-file project the upgrade found none, so expect few.
 - Nothing else changes for existing rules: the four new types run only where a config adds them.
@@ -102,7 +148,7 @@ Copy the script's file-name pattern into `capture.pattern`, with the number as t
 
 ## Coming from 0.7.x: what 0.8 changed
 
-Skip this part if you are on 0.8 already. From 0.7.x (or older), everything below applies on top of 0.9's changes.
+Skip this part if you are on 0.8 already. From 0.7.x (or older), everything below applies on top of 0.9's and 0.10's changes.
 
 Chaperone 0.8 is a "trust first" release. Until 0.7 a lot could go wrong silently: an invalid rule was skipped, a crashed tool counted as a pass, a glob that matched nothing passed, and `--format json` started with terminal escape codes. 0.8 makes all of that loud. Most configs keep working, but some will now fail, and some will find violations that were always there.
 
@@ -220,12 +266,14 @@ If a boundary rule now floods with violations you cannot fix yet, lower its `sev
 
 ## Upgrade checklist
 
-1. Install 0.9.0 and update every pin in CI and scripts (the install script replaces the binary for every repository on the machine).
-2. Run `chaperone check --format json > /tmp/chaperone.json; echo $?`.
-3. Coming from 0.7.x and exit code 2: fix every listed configuration error (see [Coming from 0.7.x](#coming-from-07x-what-08-changed)), then rerun.
-4. Read the configuration warnings and the "matched no files" rules and skipped tools; fix them, or accept them knowingly.
-5. Fix new violations in the code (symbol-reference after 0.9; regex `^`/`$`, aliased imports, component counts and symbol references after 0.8).
-6. Replace scripts that are now config, with parity proven first (above).
+1. Install the 0.10.0 launcher once (`CHAPERONE_VERSION=0.10.0` with the install script). Repositories that pin keep their version from then on.
+2. In each repository: replace a wrapper script, if there is one, at its own version first ([Replacing a wrapper script](#replacing-a-wrapper-script)); then `chaperone pin 0.10.0` and commit `.chaperone.json`.
+3. In CI, install with `CHAPERONE_VERSION=pinned`, and remove the version from every other place (CI variables, scripts).
+4. Run `chaperone check --format json > /tmp/chaperone.json; echo $?`.
+5. Coming from 0.7.x and exit code 2: fix every listed configuration error (see [Coming from 0.7.x](#coming-from-07x-what-08-changed)), then rerun.
+6. Read the configuration warnings and the "matched no files" rules and skipped tools; fix them, or accept them knowingly.
+7. Fix new violations in the code (symbol-reference after 0.9; regex `^`/`$`, aliased imports, component counts and symbol references after 0.8).
+8. Replace scripts that are now config, with parity proven first ([Moving checks into Chaperone](#moving-checks-into-chaperone)).
 
 ## Prompt for AI agents
 
@@ -233,29 +281,57 @@ Paste this into a coding agent working in any repository that uses Chaperone:
 
 ```text
 This repository uses Chaperone, a CLI that checks repo conventions from .chaperone.json.
-Upgrade it to 0.9.0, make `chaperone check` pass honestly, and then move checks that
-this repository runs as scripts into Chaperone's built-in rules. Work in this order.
+Pin it to 0.10.0 in .chaperone.json, make `chaperone check` pass honestly, and then move
+checks that this repository runs as scripts into Chaperone's built-in rules. Work in
+this order.
 
 Never: delete a rule, lower a severity, widen an exclude, raise a threshold or add an
-allowlist entry just to make the check pass; delete a script before proving the rule
-that replaces it finds the same things; edit generated files to silence a rule; or
-skip hooks (--no-verify).
+allowlist entry just to make the check pass; delete a script before proving that what
+replaces it does the same; edit generated files to silence a rule; or skip hooks
+(--no-verify).
 
-1. Upgrade Chaperone to 0.9.0 everywhere this repository pins it.
-   - Find the pins: `grep -rn -i chaperone .github package.json scripts 2>/dev/null`.
-     Look for things like `CHAPERONE_VERSION: v0.8.0` in CI workflows or a version
-     constant in a download script, and set each one to 0.9.0 in the same format
-     (release URLs use the tag, `v0.9.0`).
-   - If `chaperone --version` on this machine is older than 0.9.0, install it:
-     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.9.0 sh`
-     The script verifies the checksum. It replaces the binary for every repository on
-     this machine, so mention the upgrade in your summary.
-   - Run `chaperone --version` (must say 0.9.0 or later).
+1. Make sure the installed chaperone is a launcher (0.10.0 or later).
+   - Run `chaperone --version`. If it is missing or older than 0.10.0, install 0.10.0:
+     `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.0 sh`
+     The script verifies the checksum. It replaces the binary every repository on this
+     machine uses; from 0.10 on that binary runs whatever version each repository pins,
+     so repositories that pin are not affected. Mention the install in your summary.
 
-2. Fix whatever newly fails, honestly.
+2. Find every place this repository decides which Chaperone runs:
+   `grep -rn -i chaperone .github package.json scripts .husky lefthook.yml 2>/dev/null`.
+   Look for a version in CI (`CHAPERONE_VERSION: v0.8.0`, a download URL with a tag),
+   and for a wrapper script: a script that downloads a fixed Chaperone version and runs
+   it (for example scripts/chaperone.mjs with `const VERSION = "0.8.0"`). Note each
+   version you find.
+
+3. If there is a wrapper script, replace it at its own version first, and prove it:
+   - Pin the wrapper's version: `chaperone pin <its version>` (for example 0.8.0).
+   - `chaperone --version` must name that version
+     (`chaperone v0.8.0 (pinned in .chaperone.json, launched by v0.10.0)`), as the wrapper
+     does (`node scripts/chaperone.mjs --version`).
+   - Run both on the current tree:
+     `node scripts/chaperone.mjs check --format json > /tmp/wrapper.json; echo "exit=$?"`
+     `chaperone check --format json > /tmp/pinned.json; echo "exit=$?"`
+     The exit codes must match, and this must print nothing:
+     `diff <(jq -S .results /tmp/wrapper.json) <(jq -S .results /tmp/pinned.json)`
+     (Versions before 0.10 warn `unknown field "chaperoneVersion" is ignored`: that is
+     the one expected difference, in .diagnostics.)
+   - Only then point package.json scripts, git hooks and CI at `chaperone` (for example
+     `"chaperone": "chaperone check"`), and delete the wrapper script and the cache it
+     kept (such as node_modules/.cache/chaperone). Commit this step on its own.
+   If the versions or the results differ, stop and report it: do not delete the wrapper.
+
+4. Pin 0.10.0: `chaperone pin 0.10.0`. `chaperone --version` must say
+   `chaperone v0.10.0 (pinned in .chaperone.json)`. Then make CI install exactly the
+   pinned version, replacing any other install step:
+   `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh`
+   Remove every other place that names a Chaperone version (CI variables, scripts):
+   "chaperoneVersion" in .chaperone.json is now the only one.
+
+5. Fix whatever newly fails, honestly.
    - Run `chaperone check --format json > /tmp/chaperone.json; echo "exit=$?"`.
-     Exit 2 = the configuration is invalid and nothing was checked; 1 = violations;
-     0 = passed.
+     Exit 2 = the configuration is invalid (or the pinned version could not be
+     installed) and nothing was checked; 1 = violations; 0 = passed.
    - Exit 2 (usually coming from 0.7.x): read `.diagnostics` and fix every error in
      .chaperone.json and in any local preset it extends. Removed rule types
      (`relationship`, `file-naming`, `file-structure`, `file-suffix-content`) become
@@ -278,7 +354,7 @@ skip hooks (--no-verify).
    - Scripts or CI steps that treated exit code 1 as "chaperone failed to run" must
      treat any non-zero code as failure (2 = configuration or usage error).
 
-3. Search for checks that are now config. Look in scripts/ (and tools/, bin/), in CI
+6. Search for checks that are now config. Look in scripts/ (and tools/, bin/), in CI
    workflows, in package.json scripts, in git hooks, and in .chaperone.json `command`
    rules. Candidates:
    - copied code: `.jscpd.json`, a jscpd dependency, a guard around it;
@@ -290,7 +366,7 @@ skip hooks (--no-verify).
    For each, read the script and write down exactly what it checks, its files, its
    limits and its allowlist.
 
-4. Replace each with a built-in rule, and prove parity before deleting the script:
+7. Replace each with a built-in rule, and prove parity before deleting the script:
    - copied code -> `duplicate-code` (files, exclude, minTokens, minLines, allow);
    - repeated strings -> `repeated-literal` (files, literalPattern, minTokens,
      contextPattern, contextFiles, ignoreOrder, maxOccurrences, allow);
@@ -307,18 +383,21 @@ skip hooks (--no-verify).
    Delete the script, its `command` rule and any dependency only it used, only after
    parity holds.
 
-5. Every exception needs a reason. Carry the script's allowlist over to the rule's
+8. Every exception needs a reason. Carry the script's allowlist over to the rule's
    `allow`, entry by entry, each with a "reason" that says why the copy is kept. Do not
    add entries for things the script did not allow. An entry the rule reports as no
    longer needed is stale: remove it.
 
-6. If this repository has canaries (fixtures that break each check on purpose, so a
+9. If this repository has canaries (fixtures that break each check on purpose, so a
    check that stops firing is noticed), add one per new rule, following how the
    existing canaries are written, and make sure each one fires.
 
-7. Finish with `chaperone check` exiting 0, and summarise: the version change and the
-   pins you updated, what newly failed and how you fixed it, each script you replaced
-   (with the parity evidence: what both reported, on the tree and on the break), each
-   script you kept or kept in part and why, any allow entries and their reasons, and
-   anything still reported as skipped or "matched no files".
+10. Finish with `chaperone check` exiting 0, and summarise: the launcher you installed
+   (if any), the pin (from which version to which), each place that named a version
+   and what replaced it, the wrapper script you replaced with the parity evidence
+   (both versions, both exit codes, the results diff), what newly failed and how you
+   fixed it, each script you replaced with a rule (with the parity evidence: what both
+   reported, on the tree and on the break), each script you kept or kept in part and
+   why, any allow entries and their reasons, and anything still reported as skipped or
+   "matched no files".
 ```

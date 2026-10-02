@@ -57,6 +57,8 @@ jobs:
         if: steps.meta.outputs.skip != 'true'
         run: bun run build:all
 
+      # Every released launcher (src/launcher) downloads pinned versions as v<version>/chaperone-<os>-<arch>
+      # and checks them against v<version>/SHA256SUMS.txt: keep the asset names and this file as they are.
       - name: Generate checksums
         if: steps.meta.outputs.skip != 'true'
         shell: bash
