@@ -39,7 +39,7 @@ With a specific version:
 curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.3.0 sh
 ```
 
-The version the project in the current directory pins (for CI, see [Pinning a version](#pinning-a-version)):
+The version the project in the current directory pins (meant for CI; see [In CI](#in-ci)):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh
@@ -135,11 +135,11 @@ Each repository pins the Chaperone it runs, the way `.nvmrc` works with fnm. One
 The `chaperone` you install is also a launcher. Before anything else, it reads `chaperoneVersion` from the config the command would load: `.chaperone.json` in the working directory, or the files `--cwd` and `--config` name, as `check` reads them. Then:
 
 - **The pin names this binary's version:** it runs, as before. Nothing is downloaded.
-- **The pin names another version:** it runs that version instead, with the same arguments, stdio, environment and working directory. Its exit code is the run's exit code (`2` included), and a signal that ends it ends the run. On macOS and Linux the pinned binary replaces the launcher's process (exec), so nothing stays in between; on Windows it runs as a child and the launcher passes its exit code on. The first time, the launcher downloads the release binary for your platform from GitHub, checks it against the release's `SHA256SUMS.txt`, and keeps it in the cache; from then on it works offline. Handing over to a cached version costs about one extra binary start: tens of milliseconds.
+- **The pin names another version:** it runs that version instead, with the same arguments, stdio, environment and working directory. Its exit code is the run's exit code (`2` included), and a signal that ends it ends the run. On macOS and Linux the pinned binary replaces the launcher's process (exec), so nothing stays in between; on Windows it runs as a child, gets Ctrl-C from the console itself, and the launcher passes its exit code on. The first time, the launcher downloads the release binary for your platform from GitHub, checks it against the release's `SHA256SUMS.txt`, and keeps it in the cache; from then on it works offline. Handing over to a cached version costs about one extra binary start: tens of milliseconds.
 - **No pin:** it runs, as before. A text report on a terminal ends with a one-line tip to pin; the tip never appears with `--format json` or `ai`, with `--quiet`, or when stderr is not a terminal (CI, agents).
 - **Pins older than the launcher work:** a pin like `0.9.0` runs 0.9.0, which knows nothing of pins. It reports `unknown field "chaperoneVersion" is ignored` as a configuration warning, which never changes the exit code.
 
-**It never runs a different version.** When the pinned version is not cached and cannot be installed (no network, a checksum that does not match, a version with no release, a platform with no binary), nothing runs: the launcher explains what happened and what to do on stderr, and exits with code `2`. With `check --format json`, stdout carries the reason as one JSON document (`"error": "pinned-version-unavailable"`).
+**It never runs a different version.** When the pinned version is not cached and cannot be installed (no network, a checksum that does not match, a version with no release, a platform with no binary), or the cached binary cannot be run (a cache on a filesystem mounted `noexec`), nothing runs: the launcher explains what happened and what to do on stderr, and exits with code `2`. With `check --format json`, stdout carries the reason as one JSON document (`"error": "pinned-version-unavailable"`).
 
 ### The `chaperoneVersion` field
 
@@ -191,7 +191,7 @@ Install exactly the pinned version, in one line, and run it:
   run: chaperone check --format ai
 ```
 
-`CHAPERONE_VERSION=pinned` (or `install.sh --version pinned`, plus `--config <path>` for another config file) reads `chaperoneVersion` from `.chaperone.json`. The install script reads the pin only when asked: it installs the machine's global `chaperone`, and quietly installing a repository's pin of 0.9.0 (which has no launcher) as everyone's `chaperone` would stop every other repository's pin from working. An installed launcher of any version works too: it downloads the pinned version on the first run.
+`CHAPERONE_VERSION=pinned` (or `install.sh --version pinned`, plus `--config <path>` for another config file) reads `chaperoneVersion` from `.chaperone.json`. The install script reads the pin only when asked, because it installs the machine's global `chaperone`. For the same reason it installs a pin older than 0.10, which has no launcher, only when `CI` is set: as a workstation's `chaperone` it would run that version in every repository, whatever each one pins. On a workstation, install the launcher instead (`sh install.sh`), which runs each repository's pin; `--version 0.9.0` still installs 0.9.0 explicitly. On a self-hosted runner that several repositories share, prefer the launcher too, or `--install-dir` a directory of the job's own. An installed launcher of any version works in CI as well: it downloads the pinned version on the first run.
 
 ## Usage
 
@@ -898,7 +898,7 @@ For user-facing/code changes, include a changeset:
 bun run changeset
 ```
 
-The PR check (`Changeset Check`) enforces this for changes under `src/`, `build.ts`, or `package.json`. The `CI` workflow runs `bun test`, Chaperone's own `check`, and the same check with the compiled binary.
+The PR check (`Changeset Check`) enforces this for changes under `src/`, `build.ts`, or `package.json`. The `CI` workflow runs `bun test`, Chaperone's own `check`, the same check with the compiled binary, and the launcher's tests against the compiled binary (`CHAPERONE_TEST_BINARY=bin/<binary> bun test src/launcher/compiled.test.ts`).
 
 ### 2) Version PRs
 

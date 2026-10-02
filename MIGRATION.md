@@ -18,7 +18,7 @@ See [Pinning a version](./README.md#pinning-a-version) for everything else (the 
 
 1. **Install the launcher once:** `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=0.10.0 sh`. This is the last upgrade that changes what every repository runs: a repository that pins keeps its version from now on. Until a repository pins, it runs 0.10.0.
 2. **Pin each repository:** `chaperone pin` pins 0.10.0; `chaperone pin 0.9.0` keeps the version a repository runs today, to upgrade it later on its own. Commit `.chaperone.json`.
-3. **Install the pinned version in CI:** replace `CHAPERONE_VERSION: v0.9.0` (or a hard-coded download) with `curl -fsSL .../install.sh | CHAPERONE_VERSION=pinned sh`. The field is then the only place the version lives.
+3. **Install the pinned version in CI:** replace `CHAPERONE_VERSION: v0.9.0` (or a hard-coded download) with `curl -fsSL .../install.sh | CHAPERONE_VERSION=pinned sh`. The field is then the only place the version lives. (Outside CI, that is without `CI` set, `pinned` refuses a pin older than 0.10: such a version has no launcher, and as a workstation's `chaperone` it would run in every repository. Workstations keep the launcher.)
 4. **Delete wrapper scripts,** once the pinned version demonstrably runs in their place (next section).
 
 Upgrading a repository later is `chaperone pin <version>`: the launcher downloads the version, and the diff is one line that CI checks.
@@ -326,7 +326,8 @@ replaces it does the same; edit generated files to silence a rule; or skip hooks
    pinned version, replacing any other install step:
    `curl -fsSL https://raw.githubusercontent.com/marckraw/chaperone-cli/master/scripts/install.sh | CHAPERONE_VERSION=pinned sh`
    Remove every other place that names a Chaperone version (CI variables, scripts):
-   "chaperoneVersion" in .chaperone.json is now the only one.
+   "chaperoneVersion" in .chaperone.json is now the only one. Do not run that install line
+   on this machine: it is for CI, and outside CI it refuses pins older than 0.10.
 
 5. Fix whatever newly fails, honestly.
    - Run `chaperone check --format json > /tmp/chaperone.json; echo "exit=$?"`.
