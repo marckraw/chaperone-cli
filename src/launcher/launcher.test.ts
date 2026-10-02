@@ -140,12 +140,13 @@ describe("launching a pinned version", () => {
     const box = sandbox("0.8.0");
     const server = serve({ "0.8.0": { binary: fakeBinary("0.8.0") } });
     expect((await chaperone(box, server.url, ["check"])).exitCode).toBe(0);
-    server.stop();
+    const requests = server.requests.length;
 
-    const run = await chaperone(box, server.url, ["check", "--since", "main"]);
+    const run = await chaperone(box, offlineUrl(), ["check", "--since", "main"]);
     expect(run.exitCode).toBe(0);
     expect(report(run)).toMatchObject({ label: "0.8.0", argv: ["check", "--since", "main"] });
     expect(run.stderr).toBe("");
+    expect(server.requests.length).toBe(requests);
   }, SLOW);
 
   posixTest("passes the exit code through, 2 included", async () => {

@@ -141,10 +141,11 @@ export function startReleaseServer(
   return { url: `http://127.0.0.1:${server.port}`, requests, stop: () => server.stop(true) };
 }
 
-/** A URL where nothing listens: the network is down. */
+/**
+ * A URL where nothing listens: the network is down. Port 1 is privileged, so no test server
+ * (here or in a test run going on at the same time) can be listening there, and a connection is
+ * refused at once. (A port freed by a stopped server could be taken again before it is used.)
+ */
 export function offlineUrl(): string {
-  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
-  const url = `http://127.0.0.1:${server.port}`;
-  server.stop(true);
-  return url;
+  return "http://127.0.0.1:1";
 }
