@@ -1,5 +1,6 @@
-import type { CheckSummary, ConfigDiagnostic, RuleSummary, RunnerSummary } from "../types";
-import { describeGaps } from "./shared";
+import type { BaselineEntry } from "../baseline/baseline";
+import type { CheckResult, CheckSummary, ConfigDiagnostic, RuleSummary, RunnerSummary } from "../types";
+import { baselinedCounts, describeGaps } from "./shared";
 
 export interface JsonFormatOptions {
   /** Include only errors in results/bySource (summary counts are unchanged) */
@@ -21,18 +22,8 @@ export interface JsonOutput {
     totalWarnings: number;
     duration: number;
   };
-  results: Array<{
-    file: string;
-    rule: string;
-    message: string;
-    line?: number;
-    column?: number;
-    severity: "error" | "warning";
-    source?: string;
-    fixable?: boolean;
-    suggestion?: string;
-    context?: Record<string, unknown>;
-  }>;
+  /** The violations that count: with a baseline, only the ones it does not cover */
+  results: JsonResult[];
   bySource: Record<
     string,
     Array<{
@@ -57,6 +48,44 @@ export interface JsonOutput {
   since?: { ref: string; changedFiles: number };
   /** Paths that could not be read, so were not checked */
   unreadable: string[];
+  /** Present when `.chaperone-baseline.json` was applied; `results` and the counts then hold only new violations */
+  baseline?: {
+    file: string;
+    /** Violations the baseline covers: not counted in `summary`, never fail the check */
+    baselined: { errors: number; warnings: number; results: JsonResult[] };
+    /** Entries that no longer occur: `chaperone baseline` removes them */
+    stale: BaselineEntry[];
+    /** Entries that did not occur, but whose tool or file was not checked in this run */
+    unverified: BaselineEntry[];
+  };
+}
+
+export interface JsonResult {
+  file: string;
+  rule: string;
+  message: string;
+  line?: number;
+  column?: number;
+  severity: "error" | "warning";
+  source?: string;
+  fixable?: boolean;
+  suggestion?: string;
+  context?: Record<string, unknown>;
+}
+
+function toJsonResult(r: CheckResult): JsonResult {
+  return {
+    file: r.file,
+    rule: r.rule,
+    message: r.message,
+    line: r.line,
+    column: r.column,
+    severity: r.severity,
+    source: r.source,
+    fixable: r.fixable,
+    suggestion: r.suggestion,
+    context: r.context,
+  };
 }
 
 /**
@@ -77,18 +106,7 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
       totalWarnings: summary.totalWarnings,
       duration: summary.duration,
     },
-    results: listed.map((r) => ({
-      file: r.file,
-      rule: r.rule,
-      message: r.message,
-      line: r.line,
-      column: r.column,
-      severity: r.severity,
-      source: r.source,
-      fixable: r.fixable,
-      suggestion: r.suggestion,
-      context: r.context,
-    })),
+    results: listed.map(toJsonResult),
     bySource: {},
     diagnostics: summary.diagnostics ?? [],
     runners: summary.runners ?? [],
@@ -97,6 +115,18 @@ export function formatJson(summary: CheckSummary, options: JsonFormatOptions = {
     since: summary.since,
     unreadable: summary.unreadable ?? [],
   };
+
+  if (summary.baseline) {
+    const baselined = options.quiet
+      ? summary.baseline.baselined.filter((result) => result.severity === "error")
+      : summary.baseline.baselined;
+    output.baseline = {
+      file: summary.baseline.file,
+      baselined: { ...baselinedCounts(summary), results: baselined.map(toJsonResult) },
+      stale: summary.baseline.stale,
+      unverified: summary.baseline.unverified,
+    };
+  }
 
   // Group by source
   for (const result of listed) {

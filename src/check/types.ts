@@ -1,3 +1,5 @@
+import type { BaselineEntry } from "./baseline/baseline";
+
 /**
  * Unified check result format
  */
@@ -100,6 +102,22 @@ export interface CheckSummary {
   since?: { ref: string; changedFiles: number };
   /** Directories (ending in "/") and files that could not be read, so were not checked */
   unreadable?: string[];
+  /** Set when a baseline was applied: `results` and the counts then hold only the new violations */
+  baseline?: BaselineReport;
+}
+
+/**
+ * What applying `.chaperone-baseline.json` did to a check.
+ */
+export interface BaselineReport {
+  /** The baseline file, relative to cwd */
+  file: string;
+  /** Violations the baseline covers: not counted, never fail the check */
+  baselined: CheckResult[];
+  /** Entries that no longer occur: `chaperone baseline` removes them */
+  stale: BaselineEntry[];
+  /** Entries that did not occur, but whose tool or file was not checked this run */
+  unverified: BaselineEntry[];
 }
 
 /**
@@ -119,6 +137,8 @@ export interface CheckOptions {
   color?: boolean;
   /** Limit file-scoped custom rules to files changed since this git ref */
   since?: string;
+  /** Apply `.chaperone-baseline.json` when it exists (default: true) */
+  useBaseline?: boolean;
 }
 
 /**
