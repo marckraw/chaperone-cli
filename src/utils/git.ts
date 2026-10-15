@@ -1,5 +1,5 @@
 /**
- * Git helpers for `chaperone check --since <ref>`.
+ * Git helpers for `chaperone check --since <ref>` and `chaperone baseline`.
  */
 
 import { execCommand } from "./process";
@@ -44,4 +44,13 @@ export async function changedFilesSince(cwd: string, ref: string): Promise<Set<s
   }
 
   return new Set([...splitNul(diff.stdout), ...splitNul(untracked.stdout)]);
+}
+
+/**
+ * `path` (relative to `cwd`) as committed at HEAD, or null when git has no such file (or `cwd` is
+ * not in a git repository).
+ */
+export async function committedFile(cwd: string, path: string): Promise<string | null> {
+  const result = await execCommand("git", ["show", `HEAD:./${path}`], { cwd });
+  return result.exitCode === 0 ? result.stdout : null;
 }

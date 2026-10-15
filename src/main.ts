@@ -6,13 +6,14 @@
 import { VERSION } from "./version";
 import { runInit } from "./init";
 import { resolve } from "node:path";
-import { check, checkAndFormat, createCheckOptions, ConfigError, formatDiagnostic } from "./check";
+import { check, checkAndFormat, createCheckOptions, ConfigError, formatDiagnostic, isRuleError } from "./check";
 import {
   BASELINE_FILENAME,
   BaselineError,
   fingerprintResults,
   formatBaselineUpdate,
   readBaselineFile,
+  readCommittedBaseline,
   updateBaseline,
   verifiableIn,
   writeBaselineFile,
@@ -175,7 +176,8 @@ violations that are not in it.
 
 The baseline only shrinks. Run again, it removes the entries that no longer occur
 and adds nothing: new violations are listed and must be fixed. --allow-growth adds
-them too, and prints every entry it added.
+them too, and prints every entry it added. When the file is missing but git has it
+committed, the committed one is the starting point: deleting it cannot grow it.
 
 OPTIONS:
   --config, -c <path>   Config file path (default: .chaperone.json)
@@ -186,8 +188,8 @@ OPTIONS:
 EXIT CODES:
   0  the baseline was written, or is up to date
   1  violations that are not in the baseline remain (they were not added)
-  2  configuration error, invalid baseline, a tool that could not run,
-     usage error or internal error
+  2  configuration error, invalid baseline, a tool or rule that could not
+     check (nothing is written then), usage error or internal error
 
 EXAMPLES:
   chaperone baseline                     Create the baseline, or shrink it
@@ -404,7 +406,8 @@ async function runBaseline(args: string[]): Promise<number> {
 
   const cwd = resolve(parsedArgs.cwd ?? process.cwd());
   try {
-    const previous = readBaselineFile(cwd);
+    const working = readBaselineFile(cwd);
+    const previous = working ?? (await readCommittedBaseline(cwd));
     if (process.stderr.isTTY) {
       console.error("Running the check…");
     }
@@ -420,15 +423,31 @@ async function runBaseline(args: string[]): Promise<number> {
       return EXIT.ERROR;
     }
 
+    // A rule that could not check would record its own error, or make its entries look fixed
+    const ruleErrors = summary.results.filter(isRuleError);
+    if (ruleErrors.length > 0) {
+      for (const result of ruleErrors) {
+        console.error(`Error: ${result.rule} could not check${result.file ? ` (${result.file})` : ""}: ${result.message}`);
+      }
+      console.error(`${BASELINE_FILENAME} was not changed. Fix the rule and run again (exit code 2).`);
+      return EXIT.ERROR;
+    }
+
     const update = updateBaseline(
       previous,
       fingerprintResults(summary.results, (file) => readTextFile(joinPath(cwd, file))),
-      { allowGrowth: parsedArgs.allowGrowth ?? false, isVerifiable: verifiableIn({ runners: summary.runners }) }
+      {
+        allowGrowth: parsedArgs.allowGrowth ?? false,
+        isVerifiable: verifiableIn({ runners: summary.runners, unreadable: summary.unreadable }),
+      }
     );
-    if (update.changed) {
+    // Restoring the committed file is a change even when its entries are unchanged
+    if (update.changed || (previous && !working)) {
       writeBaselineFile(cwd, update.baseline);
     }
-    await writeReport(formatBaselineUpdate(update, BASELINE_FILENAME));
+    await writeReport(
+      formatBaselineUpdate(update, BASELINE_FILENAME, { previousFrom: previous && !working ? "head" : "working-tree" })
+    );
     return update.fresh.some((result) => result.severity === "error") ? EXIT.VIOLATIONS : EXIT.OK;
   } catch (error) {
     if (error instanceof ConfigError) {

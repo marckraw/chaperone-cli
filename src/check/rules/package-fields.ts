@@ -35,6 +35,7 @@ export async function runPackageFieldsRule(
       file: "package.json",
       rule: `package-fields/${rule.id}`,
       message: `Failed to parse package.json: ${err instanceof Error ? err.message : String(err)}`,
+      ruleError: true,
       severity: rule.severity,
       source: "custom",
     });

@@ -62,6 +62,7 @@ export async function runCommandRule(
       rule: `command/${rule.id}`,
       // An execution failure is not a rule verdict: always say what went wrong.
       message: `Failed to execute command "${commandDisplay}": ${failureReason}`,
+      ruleError: true,
       severity: rule.severity,
       source: "custom",
       context: {
@@ -99,6 +100,7 @@ export async function runCommandRule(
         file: RESULT_FILE,
         rule: `command/${rule.id}`,
         message: `Invalid stdoutPattern regex: ${rule.stdoutPattern}`,
+        ruleError: true,
         severity: "error",
         source: "custom",
         context: {
@@ -130,6 +132,7 @@ export async function runCommandRule(
         file: RESULT_FILE,
         rule: `command/${rule.id}`,
         message: `Invalid stderrPattern regex: ${rule.stderrPattern}`,
+        ruleError: true,
         severity: "error",
         source: "custom",
         context: {

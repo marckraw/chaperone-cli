@@ -80,6 +80,7 @@ export function runnerFailure(params: {
     file: params.file ?? "",
     rule: `${params.source}/runner-error`,
     message: params.message,
+    ruleError: true,
     severity: "error",
     source: params.source,
     suggestion: `Run it directly for details: ${params.command}`,

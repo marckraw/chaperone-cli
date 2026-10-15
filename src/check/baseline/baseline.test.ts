@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../../testing/fixtures";
 import { check } from "../index";
+import { ruleError } from "../rule-error";
 import type { CheckResult, RunnerSummary } from "../types";
 import {
   BaselineError,
@@ -10,6 +11,7 @@ import {
   fingerprintResult,
   fingerprintResults,
   matchBaseline,
+  normalizeMessage,
   parseBaseline,
   serializeBaseline,
   updateBaseline,
@@ -48,7 +50,7 @@ describe("fingerprints", () => {
     expect(matchBaseline(after, entriesFor(before)).fresh).toEqual([]);
   });
 
-  test("survive re-indenting, and line numbers in the message", () => {
+  test("survive re-indenting, and line references in the message", () => {
     const a = fingerprintResult(result({ message: "Exported function at line 12 must have JSDoc" }), "  foo( a,  b )");
     const b = fingerprintResult(result({ message: "Exported function at line 40 must have JSDoc" }), "\tfoo( a, b )");
     expect(a).toBe(b);
@@ -58,9 +60,24 @@ describe("fingerprints", () => {
     expect(fingerprintResult(result(), "console.log(a);")).not.toBe(fingerprintResult(result(), "console.log(b);"));
   });
 
-  test("a regex match is the offending text, wherever its line is", () => {
-    const withMatch = (line: string) => fingerprintResult(result({ context: { matchedText: "TODO" } }), line);
-    expect(withMatch("// TODO one")).toBe(withMatch("const x = 1; // TODO two"));
+  test("two matches of one pattern are told apart by their lines", () => {
+    const match = result({ context: { matchedText: "console.log" } });
+    expect(fingerprintResult(match, "console.log(a);")).not.toBe(fingerprintResult(match, "console.log(secretToken);"));
+  });
+});
+
+describe("normalizeMessage", () => {
+  test("drops line references", () => {
+    expect(normalizeMessage("lines 12-19 repeat src/a.ts:3-10, 45 tokens")).toBe("lines # repeat src/a.ts:#, 45 tokens");
+    expect(normalizeMessage("a comment opens inside the comment from line 7")).toBe("a comment opens inside the comment from line #");
+    expect(normalizeMessage("see src/a.ts:4:2")).toBe("see src/a.ts:#");
+  });
+
+  test("keeps counts, so a count that changes is a new violation", () => {
+    expect(normalizeMessage("File has 4 components, maximum is 3")).toBe("File has 4 components, maximum is 3");
+    expect(normalizeMessage("File exceeds maximum of 300 lines (has 312)")).not.toBe(
+      normalizeMessage("File exceeds maximum of 300 lines (has 340)")
+    );
   });
 });
 
@@ -99,6 +116,26 @@ describe("matchBaseline", () => {
 
     const one = matchBaseline(fingerprinted([result({ line: 1 })], { "src/a.ts": twice }), recorded);
     expect(one.stale[0]!.count).toBeUndefined(); // one of the two is gone
+  });
+
+  test("a rule-level error is never baselined, and its rule's entries are unverified", () => {
+    const broken = ruleError(result({ file: ".chaperone.json", line: undefined, message: "Rule crashed: boom" }));
+    const now = fingerprinted([broken], files);
+    const recorded = entriesFor([...legacy, ...now]);
+    expect(recorded).toEqual(entries); // the error is left out
+
+    // The rule's violations are gone only because it could not check: not stale
+    const match = matchBaseline(now, entries);
+    expect(match.fresh).toEqual([broken]);
+    expect(match.stale).toEqual([]);
+    expect(match.unverified.map((entry) => entry.file)).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  test("entries in files that could not be read are unverified", () => {
+    const isVerifiable = verifiableIn({ unreadable: ["src/b.ts", "vendor/"] });
+    expect(isVerifiable({ rule: "r/x", file: "src/b.ts", fingerprint: "", message: "" })).toBe(false);
+    expect(isVerifiable({ rule: "r/x", file: "vendor/lib.ts", fingerprint: "", message: "" })).toBe(false);
+    expect(isVerifiable({ rule: "r/x", file: "src/a.ts", fingerprint: "", message: "" })).toBe(true);
   });
 
   test("entries whose tool did not run are unverified, not stale", () => {
@@ -232,6 +269,29 @@ describe("check() with a baseline", () => {
     expect(summary.results).toEqual([]);
     expect(summary.baseline?.baselined.map((r) => r.line)).toEqual([12]);
     expect(summary.baseline?.stale).toEqual([]);
+  });
+
+  test("replacing one of two matches of a pattern in a file fails the check", async () => {
+    const cwd = makeProject({
+      ".chaperone.json": JSON.stringify({
+        version: "1.0.0",
+        rules: {
+          custom: [
+            { type: "regex", id: "no-console", severity: "error", files: "src/**/*.ts", pattern: "console\\.log", message: "No console.log" },
+          ],
+        },
+      }),
+      "src/a.ts": "console.log(a);\nconsole.log(b);\n",
+    });
+    await writeBaselineFor(cwd);
+    expect((await check({ cwd, format: "text" })).success).toBe(true);
+
+    writeFileSync(join(cwd, "src/a.ts"), "console.log(a);\nconsole.log(secretToken);\n");
+    const summary = await check({ cwd, format: "text" });
+    expect(summary.success).toBe(false);
+    expect(summary.results.map((r) => r.line)).toEqual([2]);
+    expect(summary.baseline?.baselined.map((r) => r.line)).toEqual([1]);
+    expect(summary.baseline?.stale).toHaveLength(1);
   });
 
   test("useBaseline: false reports everything", async () => {

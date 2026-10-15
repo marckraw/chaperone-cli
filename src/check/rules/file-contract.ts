@@ -79,6 +79,7 @@ function reportConfigError(rule: FileContractRule, message: string): RuleResult 
         file: ".chaperone.json",
         rule: `file-contract/${rule.id}`,
         message,
+        ruleError: true,
         severity: "error",
         source: "custom",
       },

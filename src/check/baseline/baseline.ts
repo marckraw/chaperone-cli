@@ -2,13 +2,16 @@
  * Baselines: the violations a project already had when it adopted a rule, recorded so the check
  * fails only on new ones. Pure: reading and writing the file lives in ./file.ts.
  *
- * An entry is a rule id, a file and a fingerprint: a hash of the offending text (the regex match,
- * or the source line the result points at) and the message, both normalised. Line numbers are
- * never part of it, so a violation that moves stays baselined; one whose line is edited does not.
+ * An entry is a rule id, a file and a fingerprint: a hash of the offending text (the regex match
+ * and the source line the result points at) and the message, normalised. Line numbers are never
+ * part of it, so a violation that moves stays baselined; one whose line is edited does not.
  * Identical violations in one file share an entry with a count.
+ *
+ * Rule-level errors (see ../rule-error) are never baselined: they are the rule failing to check.
  */
 
 import { createHash } from "node:crypto";
+import { isRuleError } from "../rule-error";
 import type { CheckResult, RunnerSummary } from "../types";
 
 export const BASELINE_FILENAME = ".chaperone-baseline.json";
@@ -52,21 +55,25 @@ export function normalizeText(text: string): string {
 }
 
 /**
- * Whitespace collapsed and digit runs replaced, so "at line 12" or "has 312 lines" survives the
- * file changing around the violation.
+ * Whitespace collapsed and line references replaced ("at line 12", "lines 3-10", "src/a.ts:4:2"),
+ * so the message survives the violation moving. Every other number is kept: a count that changes
+ * ("has 312 lines", "4 components") makes the violation new, whether it got worse or better.
  */
 export function normalizeMessage(message: string): string {
-  return normalizeText(message).replace(/\d+/g, "#");
+  return normalizeText(message)
+    .replace(/\b(lines?)\s+\d+(?:\s*[-–]\s*\d+)?/gi, "$1 #")
+    .replace(/(\S):\d+(?::\d+)?(?:-\d+)?\b/g, "$1:#");
 }
 
 /**
- * The fingerprint of one result. `lineText` is the source line the result points at, when it has
- * one; a regex match takes precedence over it.
+ * The fingerprint of one result: its regex match, the source line it points at (`lineText`, when
+ * it has one) and its message. The line matters with the match: two `console.log` calls in a file
+ * match the same text, and replacing one must not pass as the other.
  */
 export function fingerprintResult(result: CheckResult, lineText?: string): string {
-  const offending = result.context?.matchedText ?? lineText ?? "";
+  const parts = [result.context?.matchedText ?? "", lineText ?? "", result.message];
   return createHash("sha256")
-    .update(`${normalizeText(offending)}\u0000${normalizeMessage(result.message)}`)
+    .update([normalizeText(parts[0]!), normalizeText(parts[1]!), normalizeMessage(parts[2]!)].join("\u0000"))
     .digest("hex")
     .slice(0, 16);
 }
@@ -122,13 +129,17 @@ export interface BaselineMatch {
  * Split `results` into fresh and baselined ones, and find the entries that no longer occur.
  * When a file has more identical violations than its entry's count, the first ones (by line)
  * are baselined and the rest are fresh. `isVerifiable` says whether an entry's absence means
- * it was fixed (false: its tool did not run, or its file was outside `--since`).
+ * it was fixed (false: its tool did not run, or its file was outside `--since`). Rule-level errors
+ * are always fresh, and while a rule reports one its entries are unverified.
  */
 export function matchBaseline(
   fingerprinted: readonly FingerprintedResult[],
   entries: readonly BaselineEntry[],
   isVerifiable: (entry: BaselineEntry) => boolean = () => true
 ): BaselineMatch {
+  const brokenRules = new Set(fingerprinted.filter(({ result }) => isRuleError(result)).map(({ result }) => result.rule));
+  const verifiable = (entry: BaselineEntry) => !brokenRules.has(entry.rule) && isVerifiable(entry);
+
   const remaining = new Map<string, number>();
   for (const entry of entries) {
     const key = entryKey(entry);
@@ -140,6 +151,7 @@ export function matchBaseline(
   );
   const baselinedSet = new Set<CheckResult>();
   for (const { result, fingerprint } of ordered) {
+    if (isRuleError(result)) continue;
     const key = entryKey({ rule: result.rule, file: result.file, fingerprint });
     const left = remaining.get(key) ?? 0;
     if (left > 0) {
@@ -157,7 +169,7 @@ export function matchBaseline(
     seen.add(key);
     const left = remaining.get(key) ?? 0;
     if (left === 0) continue;
-    (isVerifiable(entry) ? stale : unverified).push(withCount(entry, left));
+    (verifiable(entry) ? stale : unverified).push(withCount(entry, left));
   }
 
   // Keep the results in their original order
@@ -167,11 +179,12 @@ export function matchBaseline(
 }
 
 /**
- * One entry per distinct violation, counting identical ones.
+ * One entry per distinct violation, counting identical ones. Rule-level errors are left out.
  */
 export function entriesFor(fingerprinted: readonly FingerprintedResult[]): BaselineEntry[] {
   const byKey = new Map<string, BaselineEntry>();
   for (const { result, fingerprint } of fingerprinted) {
+    if (isRuleError(result)) continue;
     const entry: BaselineEntry = { rule: result.rule, file: result.file, fingerprint, message: result.message };
     const key = entryKey(entry);
     const existing = byKey.get(key);
@@ -326,13 +339,17 @@ function parseEntry(value: unknown, where: string): BaselineEntry {
 
 /**
  * Whether an entry's absence from a run means it was fixed. Not when its tool was skipped or
- * could not run, and not, with `--since`, for a custom rule's entry in a file that was not checked
- * (the tools still check the whole project).
+ * could not run, not when its file (or a directory above it) could not be read, and not, with
+ * `--since`, for a custom rule's entry in a file that was not checked (the tools still check the
+ * whole project).
  */
 export function verifiableIn(run: {
   runners?: readonly RunnerSummary[];
   changedFiles?: ReadonlySet<string>;
+  /** Files, and directories ending in "/", that could not be read */
+  unreadable?: readonly string[];
 }): (entry: BaselineEntry) => boolean {
+  const unreadable = run.unreadable ?? [];
   const runners = run.runners ?? [];
   const tools = new Set(runners.map((runner) => runner.name));
   const notRun = new Set(
@@ -341,6 +358,7 @@ export function verifiableIn(run: {
   return (entry) => {
     const source = entry.rule.split("/")[0] ?? "";
     if (notRun.has(source)) return false;
+    if (unreadable.some((path) => (path.endsWith("/") ? entry.file.startsWith(path) : entry.file === path))) return false;
     if (run.changedFiles && entry.file && !tools.has(source) && !run.changedFiles.has(entry.file)) return false;
     return true;
   };

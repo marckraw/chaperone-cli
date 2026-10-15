@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { committedFile } from "../../utils/git";
 import { BASELINE_FILENAME, BaselineError, parseBaseline, serializeBaseline, type Baseline } from "./baseline";
 
 export function baselinePath(cwd: string): string {
@@ -35,4 +36,15 @@ export function writeBaselineFile(cwd: string, baseline: Baseline): void {
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, serializeBaseline(baseline));
   renameSync(temporary, path);
+}
+
+/**
+ * The baseline committed at HEAD, or null when git has none. `chaperone baseline` starts from it
+ * when the working tree has no baseline, so deleting the file cannot grow the baseline.
+ *
+ * @throws {BaselineError} when the committed file is not a valid baseline
+ */
+export async function readCommittedBaseline(cwd: string): Promise<Baseline | null> {
+  const text = await committedFile(cwd, BASELINE_FILENAME);
+  return text === null ? null : parseBaseline(text, `${BASELINE_FILENAME} at HEAD`);
 }

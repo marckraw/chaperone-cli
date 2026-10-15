@@ -27,6 +27,7 @@ function invalid(rule: RepeatedLiteralRule, field: string, pattern: string, erro
         file: ".chaperone.json",
         rule: `repeated-literal/${rule.id}`,
         message: `Invalid ${field} /${pattern}/: ${error instanceof Error ? error.message : String(error)}`,
+        ruleError: true,
         severity: "error",
         source: "custom",
       },

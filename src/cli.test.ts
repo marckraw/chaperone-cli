@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "./testing/fixtures";
 import { VERSION } from "./version";
@@ -235,6 +235,8 @@ describe("chaperone baseline", () => {
     const run = runCli(["baseline"], cwd);
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain(`Created ${BASELINE}: 2 entries (2 violations).`);
+    // A new baseline lists every entry it records
+    expect(run.stdout).toContain("  + regex/no-todo  src/a.ts  No TODOs\n  + regex/no-todo  src/b.ts  No TODOs");
     return cwd;
   }
 
@@ -304,6 +306,58 @@ describe("chaperone baseline", () => {
     expect(grown.stdout).toContain("Added 1 entry (--allow-growth):\n  + regex/no-todo  src/c.ts  No TODOs");
     expect(readBaseline(cwd).entries).toHaveLength(3);
     expect(runCli(["check"], cwd).exitCode).toBe(0);
+  });
+
+  test("deleting the committed baseline cannot grow it: baseline starts from HEAD", () => {
+    const cwd = legacyProject();
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd });
+    git("init", "-q");
+    git("add", ".");
+    git("commit", "-q", "-m", "init");
+
+    rmSync(join(cwd, BASELINE));
+    writeFileSync(join(cwd, "src/c.ts"), "// TODO new\n");
+    const run = runCli(["baseline"], cwd);
+    expect(run.exitCode).toBe(1);
+    expect(run.stdout).toContain("missing from the working tree: starting from the one committed at HEAD");
+    expect(run.stdout).toContain("! regex/no-todo  src/c.ts  No TODOs");
+    expect(readBaseline(cwd).entries.map((entry) => entry.file)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(runCli(["check"], cwd).exitCode).toBe(1);
+  });
+
+  describe("a rule that cannot check", () => {
+    const META = { type: "package-fields", id: "meta", severity: "error", requiredFields: ["description"] };
+
+    test("leaves the baseline alone: baseline exits 2, check keeps the entry as unverified", () => {
+      const cwd = projectWithRules([META], { "package.json": '{ "name": "x" }\n' });
+      expect(runCli(["baseline"], cwd).exitCode).toBe(0);
+      const before = readFileSync(join(cwd, BASELINE), "utf-8");
+
+      writeFileSync(join(cwd, "package.json"), "{ not json");
+      const run = runCli(["baseline"], cwd);
+      expect(run.exitCode).toBe(2);
+      expect(run.stderr).toContain("package-fields/meta could not check (package.json): Failed to parse package.json");
+      expect(readFileSync(join(cwd, BASELINE), "utf-8")).toBe(before);
+
+      const check = runCli(["check", "--format", "json"], cwd);
+      expect(check.exitCode).toBe(1);
+      const json = JSON.parse(check.stdout);
+      expect(json.results[0].message).toContain("Failed to parse package.json");
+      expect(json.baseline.stale).toEqual([]);
+      expect(json.baseline.unverified.map((entry: { rule: string }) => entry.rule)).toEqual(["package-fields/meta"]);
+
+      // Fixed again, the legacy violation is still baselined
+      writeFileSync(join(cwd, "package.json"), '{ "name": "x" }\n');
+      expect(runCli(["check"], cwd).exitCode).toBe(0);
+    });
+
+    test("is never baselined: creating the baseline exits 2 and writes nothing", () => {
+      const cwd = projectWithRules([META], { "package.json": "{ not json" });
+      const run = runCli(["baseline"], cwd);
+      expect(run.exitCode).toBe(2);
+      expect(existsSync(join(cwd, BASELINE))).toBe(false);
+    });
   });
 
   test("--no-baseline reports every violation", () => {

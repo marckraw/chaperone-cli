@@ -45,6 +45,7 @@ export async function runRegexRule(
           file: ".chaperone.json",
           rule: `regex/${rule.id}`,
           message: `Invalid regex pattern ${shownPattern}: ${error instanceof Error ? error.message : String(error)}`,
+          ruleError: true,
           severity: "error",
           source: "custom",
         },

@@ -22,6 +22,7 @@ export async function runReactComponentCountRule(
           file: ".chaperone.json",
           rule: `react-component-count/${rule.id}`,
           message: `react-component-count rule '${rule.id}' must set maxComponents to at least 1`,
+          ruleError: true,
           severity: "error",
           source: "custom",
         },

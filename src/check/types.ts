@@ -13,6 +13,12 @@ export interface CheckResult {
   source?: string; // The source of the rule (typescript, eslint, custom, ai-instructions)
   fixable?: boolean;
   suggestion?: string;
+  /**
+   * The rule (or tool) could not check, so this is not a violation: an invalid pattern, a crash,
+   * a file it could not parse. Never baselined; the rule's baseline entries count as unverified.
+   * Set it with `ruleError()` from ./rule-error.
+   */
+  ruleError?: true;
   // Additional context for debugging/fixing
   context?: {
     matchedText?: string; // For regex: the text that matched

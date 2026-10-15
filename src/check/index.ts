@@ -18,6 +18,7 @@ export { runAllTools } from "./runners";
 export { runAllRules } from "./rules";
 export { format, formatText, formatJson, formatAI } from "./formatters";
 export { BaselineError, BASELINE_FILENAME } from "./baseline";
+export { ruleError, isRuleError } from "./rule-error";
 
 /**
  * Progress callback for reporting check progress.
@@ -117,7 +118,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     const match = matchBaseline(
       fingerprintResults(allResults, (file) => context.index.read(file)),
       baseline.entries,
-      verifiableIn({ runners: toolResults.summaries, changedFiles })
+      verifiableIn({ runners: toolResults.summaries, changedFiles, unreadable: context.index.unreadable() })
     );
     allResults = match.fresh;
     baselineReport = {
