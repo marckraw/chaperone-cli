@@ -1,5 +1,4 @@
 import { basename, dirname, extname } from "node:path";
-import ts from "typescript";
 import type { CheckResult, ReservedNamesRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { getRuleContext } from "./utils/rule-context";
@@ -27,10 +26,21 @@ export async function runReservedNamesRule(rule: ReservedNamesRule, options: Rul
     });
   };
   try {
-    const reserved = new Set([...readPackageExportNames(options.cwd, rule.package)].map(normalize));
+    const ts = (await import("typescript")).default;
+    const exported = readPackageExportNames(ts, options.cwd, rule.package, rule.includeTypes ?? false);
+    const reserved = new Set([...exported.names].map(normalize));
+    for (const warning of exported.warnings) {
+      results.push({
+        ...warning,
+        file: relativeFile(options.cwd, warning.file),
+        rule: `${rule.type}/${rule.id}`,
+        severity: "warning",
+        source: "custom",
+      });
+    }
     const scoped = context.inScope(files);
     const needsCode = compare.has("exported-identifier") || compare.has("component-name");
-    const project = needsCode && scoped.length > 0 ? createStaticProject(options.cwd, scoped) : null;
+    const project = needsCode && scoped.length > 0 ? createStaticProject(ts, options.cwd, scoped) : null;
     for (const file of scoped) {
       try {
         const candidates = new Map<string, { name: string; kind: string; line?: number }>();
@@ -45,6 +55,7 @@ export async function runReservedNamesRule(rule: ReservedNamesRule, options: Rul
           const source = project.source(file);
           if (compare.has("exported-identifier")) {
             for (const symbol of project.exportsOf(source)) {
+              if (!rule.includeTypes && !project.isValueExport(symbol, source)) continue;
               const declaration = symbol.declarations?.find((node) => node.getSourceFile() === source);
               if (symbol.name !== "default") {
                 add(symbol.name, "exported identifier", declaration ? nodeLocation(declaration).line : undefined);

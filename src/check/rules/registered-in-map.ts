@@ -25,7 +25,8 @@ export async function runRegisteredInMapRule(rule: RegisteredInMapRule, options:
   // The complete schema set is intentional: a changed map (or imported spread) can
   // remove a registration for an unchanged schema. --since must still catch that.
   try {
-    const project = createStaticProject(options.cwd, [...files, rule.mapFile]);
+    const ts = (await import("typescript")).default;
+    const project = createStaticProject(ts, options.cwd, [...files, rule.mapFile]);
     const keys = project.objectEntries(project.exportedExpression(rule.mapFile, rule.mapExport));
     for (const file of files) {
       try {

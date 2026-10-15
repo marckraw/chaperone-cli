@@ -439,6 +439,8 @@ export interface ReservedNamesRule extends BaseRule, AIGeneratedMetadata {
   type: "reserved-names";
   package: string;
   files: string;
+  /** Include type-only exports as reserved names (default false). */
+  includeTypes?: boolean;
   compare?: Array<"file-name" | "folder-name" | "exported-identifier" | "component-name">;
   caseSensitive?: boolean;
   allow?: string[];

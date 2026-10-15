@@ -1,0 +1,60 @@
+import type {
+  BackpackCore,
+  GenerateSchema,
+} from '@ef-global/backpack/lib/storyblok/schema-types';
+
+import type {
+  Core,
+  StoryblokComponentSchemaBase,
+} from 'storyblok-schema-types';
+
+export type Settings = {
+  theme: BackpackCore['BackpackTheme'];
+  seo_meta_fields: Core['custom'];
+  structured_data: Core['textarea'];
+  seo: Core['tab'];
+};
+
+export type Schema = GenerateSchema<Settings>;
+
+const settings: StoryblokComponentSchemaBase<Schema['Input']> = {
+  name: 'settings',
+  display_name: 'Settings',
+  is_root: true,
+  is_nestable: false,
+  component_group_name: 'Content type',
+  schema: {
+    theme: {
+      type: 'custom',
+      // @ts-ignore
+      field_type: 'backpack-theme-v1',
+      options: [
+        {
+          name: 'oauthToken',
+          value: process.env.STORYBLOK_OAUTH_TOKEN,
+        },
+      ],
+      default_value: {},
+    },
+    structured_data: {
+      type: 'textarea',
+      display_name: 'Structured Data',
+      description:
+        'Add structured data to the page https://developers.google.com/search/docs/appearance/structured-data/generate-structured-data-with-javascript. E.g.: {"@context": "https://schema.org","@type": "Corporation","name": "EF","url": "https://your-url.com/","logo": "https://your-logo.com/logo.svg"}',
+      translatable: true,
+    },
+    seo_meta_fields: {
+      type: 'custom',
+      field_type: 'seo-metatags',
+      translatable: true,
+      options: [],
+    },
+    seo: {
+      type: 'tab',
+      display_name: 'Default SEO',
+      keys: ['seo_meta_fields', 'structured_data'],
+    },
+  },
+};
+
+export default settings;

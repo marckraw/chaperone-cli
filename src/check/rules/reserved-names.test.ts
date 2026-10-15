@@ -63,6 +63,78 @@ describe("reserved-names", () => {
     expect(result.results.map((entry) => entry.context?.symbol)).toEqual(["Button"]);
   });
 
+  test("ignores metadata, asset subpaths and lowercase modules that export no matching identifier", async () => {
+    const result = await run({
+      "node_modules/@ef-global/backpack/package.json": JSON.stringify({ exports: {
+        ".": { types: "./index.d.ts" },
+        "./package.json": "./package.json",
+        "./styles": "./styles.css",
+        "./Logo.svg": "./Logo.svg",
+        "./utils": { types: "./utils.d.ts" },
+      } }),
+      "node_modules/@ef-global/backpack/utils.d.ts": "export declare function cn(): string;",
+      "src/components/utils/Custom.ts": "",
+      "src/components/package/Custom.ts": "",
+      "src/components/styles/Custom.ts": "",
+      "src/components/Logo/Custom.ts": "",
+    });
+    expect(result.filesChecked).toBe(4);
+    expect(result.results).toEqual([]);
+  });
+
+  test("reserves actual lowercase identifiers and PascalCase component subpaths", async () => {
+    const result = await run({
+      "node_modules/@ef-global/backpack/package.json": JSON.stringify({ exports: {
+        "./utils": { types: "./utils.d.ts" },
+        "./Button": { types: "./Button.d.ts" },
+      } }),
+      "node_modules/@ef-global/backpack/index.d.ts": "",
+      "node_modules/@ef-global/backpack/utils.d.ts": "export declare function utils(): void;",
+      "node_modules/@ef-global/backpack/Button.d.ts": "export default function(): void;",
+      "src/components/utils/Custom.ts": "",
+      "src/components/Button/Custom.ts": "",
+    });
+    expect(result.results.map((entry) => entry.context?.symbol).sort()).toEqual(["Button", "utils"]);
+  });
+
+  test("defaults to value exports, with an opt-in for types and explicit type-only re-exports", async () => {
+    const files = {
+      "node_modules/@ef-global/backpack/package.json": '{"exports":{".":{"types":"./index.d.ts"},"./ButtonProps":{"types":"./props.d.ts"}}}',
+      "node_modules/@ef-global/backpack/index.d.ts": 'export { Button, cn } from "./values"; export { TypeOnlyButton } from "./barrel"; export type * from "./types";',
+      "node_modules/@ef-global/backpack/barrel.d.ts": 'export type { Button as TypeOnlyButton } from "./values";',
+      "node_modules/@ef-global/backpack/values.d.ts": 'export declare const Button: unknown; export declare function cn(): string;',
+      "node_modules/@ef-global/backpack/types.d.ts": 'export interface ButtonProps {} export declare const TypeOnlyStar: unknown;',
+      "node_modules/@ef-global/backpack/props.d.ts": 'export interface ButtonProps {}',
+      "src/components/Other.ts": "export const ButtonProps = 1, Button = 1, cn = 1, TypeOnlyButton = 1, TypeOnlyStar = 1;",
+    };
+    const values = await run(files);
+    expect(values.results.map((entry) => entry.context?.symbol).sort()).toEqual(["Button", "cn"]);
+    const all = await run(files, { includeTypes: true });
+    expect(all.results.map((entry) => entry.context?.symbol).sort()).toEqual(["Button", "ButtonProps", "TypeOnlyButton", "TypeOnlyStar", "cn"]);
+  });
+
+  test("ignores local type-only exports by default too", async () => {
+    const files = { "src/components/Other.ts": "export interface Button {} export type Card = string;" };
+    expect((await run(files)).results).toEqual([]);
+    expect((await run(files, { includeTypes: true })).results.map((entry) => entry.context?.symbol)).toEqual(["Button", "Card"]);
+  });
+
+  test.each([
+    'export * from "@missing/peer/components";',
+    'export { MissingButton } from "@missing/peer/components";',
+  ])("warns about a missing peer and continues checking available exports", async (missing) => {
+    const result = await run({
+      "node_modules/@ef-global/backpack/index.d.ts": 'export * from "./public";',
+      "node_modules/@ef-global/backpack/public.d.ts": `${missing} export { Card } from "./Card";`,
+      "src/components/MissingButton.ts": "",
+      "src/components/Card.ts": "",
+    });
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0]).toMatchObject({ severity: "warning", line: 1 });
+    expect(result.results[0]?.message).toContain('missing peer "@missing/peer"');
+    expect(result.results[1]).toMatchObject({ severity: "error", context: { symbol: "Card" } });
+  });
+
   test("file, folder and exported identifiers can be selected independently", async () => {
     const files = { "src/components/Button/Other.ts": "\nexport const Card = 1;" };
     expect((await run(files, { compare: ["file-name"] })).results).toEqual([]);

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../../testing/fixtures";
 import { REGISTERED_IN_MAP, REGISTERED_SCHEMAS } from "../../testing/backbase-fixtures";
 import type { RegisteredInMapRule } from "../types";
@@ -15,6 +17,28 @@ function run(files: Record<string, string> = {}, options: Partial<RegisteredInMa
 describe("registered-in-map", () => {
   test("a clean fixture passes, including imported object spreads", async () => {
     expect((await run()).results).toEqual([]);
+  });
+
+  test("reads the real boilerplate schemas and trimmed map, including schema-only settings", async () => {
+    const fixture = (file: string) => readFileSync(join(import.meta.dir, "__fixtures__/backpack-boilerplate", file), "utf8");
+    const cwd = makeProject({
+      "src/components/page.sb.ts": fixture("page.sb.ts.txt"),
+      "src/components/settings.sb.ts": fixture("settings.sb.ts.txt"),
+      "src/components/component-list.ts": fixture("component-list.ts.txt"),
+      "tsconfig.json": fixture("tsconfig.json.txt"),
+    });
+    const result = await runRegisteredInMapRule(REGISTERED_IN_MAP, { cwd, include: [], exclude: ["node_modules"] });
+    expect(result.filesChecked).toBe(2);
+    expect(result.results).toEqual([]);
+
+    // Removing the real InternalComponents spread must make settings unregistered.
+    const missing = makeProject({
+      "src/components/settings.sb.ts": fixture("settings.sb.ts.txt"),
+      "src/components/component-list.ts": fixture("component-list.ts.txt").replace("  ...InternalComponents,", ""),
+    });
+    const broken = await runRegisteredInMapRule(REGISTERED_IN_MAP, { cwd: missing, include: [], exclude: [] });
+    expect(broken.results).toHaveLength(1);
+    expect(broken.results[0]?.context?.symbol).toBe("settings");
   });
 
   test("one missing schema produces one violation, with its schema name and location", async () => {

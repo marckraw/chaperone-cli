@@ -1,0 +1,20 @@
+{
+  "repository": "ef-global/storyblok-nextjs-backpack-boilerplate",
+  "commit": "d9be2a360b18ca54504c9b963383c0561c65913a",
+  "files": {
+    "page.sb.ts.txt": "src/components/page.sb.ts (unmodified)",
+    "settings.sb.ts.txt": "src/components/settings.sb.ts (unmodified)",
+    "tsconfig.json.txt": "tsconfig.json (unmodified)",
+    "component-list.ts.txt": "src/components/component-list.ts (imports and unrelated component entries/groups removed; original registration keys, type annotation, local spreads and allComponents export retained)"
+  },
+  "fullRepositoryCheck": {
+    "schemaGlob": "src/**/*.sb.ts",
+    "mapFile": "src/components/component-list.ts",
+    "filesChecked": 2,
+    "results": [],
+    "enumKeys": false,
+    "namespaceImportSpreads": false,
+    "dependenciesInstalled": false,
+    "note": "Registration keys are static; component implementations and schema type imports are not evaluated. This is a registration check, not a build or dependency validation."
+  }
+}

@@ -1,0 +1,120 @@
+import type {
+  BackpackCore,
+  GenerateSchema,
+} from '@ef-global/backpack/lib/storyblok/schema-types';
+
+import type { Components } from '@/components/all-components';
+import type {
+  Core,
+  StoryblokComponentSchemaBase,
+} from 'storyblok-schema-types';
+
+export type Page = {
+  body: Core<Components>['bloks'];
+  seo_meta_fields: Core['custom'];
+  canonical: Core['multilink'];
+  mono: Core['boolean'];
+  theme: Core['option'];
+  no_index: Core['boolean'];
+  no_follow: Core['boolean'];
+  seo: Core['tab'];
+  design: Core['tab'];
+  structured_data: Core['textarea'];
+  background_color: BackpackCore['BackpackColorPicker'];
+};
+
+export type Schema = GenerateSchema<Page>;
+
+const page: StoryblokComponentSchemaBase<Schema['Input']> = {
+  name: 'page',
+  display_name: 'Page',
+  component_group_name: 'Content type',
+  is_root: true,
+  is_nestable: false,
+  schema: {
+    background_color: {
+      type: 'custom',
+      field_type: 'backpack-color-picker',
+      display_name: 'Background color (save to see changes)',
+      options: [
+        {
+          name: 'colors',
+          value: 'colors',
+        },
+      ],
+    },
+    body: {
+      type: 'bloks',
+      restrict_components: true,
+      component_whitelist: [
+        'sb-section',
+        'status-overlay',
+        'text',
+        'sb-sticky-nav-bar',
+        'sb-sticky-promo-bar',
+        'sb-popup-modal',
+      ],
+    },
+    mono: {
+      display_name: 'Mono',
+      type: 'boolean',
+    },
+    theme: {
+      type: 'option',
+      display_name: 'Theme',
+      options: [
+        {
+          name: 'Dark mode',
+          value: 'dark',
+        },
+        {
+          name: 'Light mode',
+          value: 'light',
+        },
+      ],
+      default_value: 'light',
+    },
+    structured_data: {
+      type: 'textarea',
+      display_name: 'Structured Data',
+      description:
+        'Add structured data to the page https://developers.google.com/search/docs/appearance/structured-data/generate-structured-data-with-javascript. E.g.: {"@context": "https://schema.org","@type": "Corporation","name": "EF","url": "https://your-url.com/","logo": "https://your-logo.com/logo.svg"}',
+      translatable: true,
+    },
+    canonical: {
+      type: 'multilink',
+      display_name: 'Canonical link',
+      description:
+        'Canonical link for this page. Leave empty to use the current page url',
+      translatable: true,
+    },
+    no_index: {
+      type: 'boolean',
+      translatable: true,
+      description: 'Prevent search engines from indexing this page',
+    },
+    no_follow: {
+      type: 'boolean',
+      translatable: true,
+      description: 'Prevent search engines from crawling links on this page',
+    },
+    seo_meta_fields: {
+      type: 'custom',
+      field_type: 'seo-metatags',
+      translatable: true,
+      options: [],
+    },
+    seo: {
+      type: 'tab',
+      display_name: 'SEO',
+      keys: ['canonical', 'seo_meta_fields', 'no_index', 'no_follow'],
+    },
+    design: {
+      type: 'tab',
+      display_name: 'Design',
+      keys: ['mono', 'theme', 'background_color'],
+    },
+  },
+};
+
+export default page;

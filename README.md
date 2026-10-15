@@ -700,7 +700,7 @@ Type-only exports and default exports are not checked; `export { a as b }`, `exp
 
 ### `reserved-names`
 
-Reserve the names exported by an installed package, so custom components cannot shadow the design system. Package code is never executed. Chaperone reads explicit subpaths and wildcard targets from the package's `exports` map, reads named exports from its entry points (including declaration barrels and aliases), and falls back to `types`, `typings` or `index.d.ts` for older packages. The package is resolved from the checked project's `node_modules`, including ancestor directories; it is read even though dependency folders are excluded from the project scan. Missing packages, unreadable exports and invalid declarations produce errors.
+Reserve the names exported by an installed package, so custom components cannot shadow the design system. Package code is never executed. Chaperone reads explicit subpaths and wildcard targets from the package's `exports` map, reads named exports from its entry points (including declaration barrels and aliases), and falls back to `types`, `typings` or `index.d.ts` for older packages. The package is resolved from the checked project's `node_modules`, including ancestor directories; it is read even though dependency folders are excluded from the project scan. Missing packages, unreadable local exports and invalid declarations produce errors. A re-export from an uninstalled peer produces a warning naming the peer, while the remaining available exports are still checked.
 
 ```json
 {
@@ -711,11 +711,12 @@ Reserve the names exported by an installed package, so custom components cannot 
   "files": "src/components/**/*.{ts,tsx}",
   "compare": ["file-name", "folder-name", "exported-identifier", "component-name"],
   "caseSensitive": true,
+  "includeTypes": false,
   "allow": ["Link"]
 }
 ```
 
-`package` and `files` are required. `compare` defaults to all four modes: the file basename without its extension, its immediate folder name, its exported identifiers, and its React component declarations (including non-exported ones, using the same detection as `react-component-count`). Select any nonempty subset. `caseSensitive` defaults to `true`; the allow list uses the same comparison. `exclude` filters the matched project files. Each reserved name is reported once per file, even when several modes find it. For example, `src/components/Button/Button.tsx` fails if Backpack exports `Button`. An allow list contains intentional exceptions, rather than a hand-maintained list of Backpack names.
+`package` and `files` are required. `compare` defaults to all four modes: the file basename without its extension, its immediate folder name, its exported identifiers, and its React component declarations (including non-exported ones, using the same detection as `react-component-count`). Select any nonempty subset. `caseSensitive` defaults to `true`; the allow list uses the same comparison. Only value exports are reserved by default. Set `includeTypes: true` to include type-only exports too (from both the package and matching project files). Actual value utilities such as `cn` remain value exports; add them to `allow` if reuse is intentional. Metadata, styles and asset subpaths are skipped. A code subpath contributes its own name only when it is a PascalCase component name or an actual exported identifier; a `./utils` module alone does not reserve `utils`. `exclude` filters the matched project files. Each reserved name is reported once per file, even when several modes find it. For example, `src/components/Button/Button.tsx` fails if Backpack exports `Button`. An allow list contains intentional exceptions, rather than a hand-maintained list of Backpack names.
 
 ### `registered-in-map`
 
@@ -738,7 +739,7 @@ import { LocalComponents } from "./local-components";
 export default { ...LocalComponents, custom_hero: CustomHero };
 ```
 
-`files` and `mapFile` are required. Each file uses its default export, or its sole named value export. Set `mapExport` and/or `schemaExport` when the file has several named exports, for example `"mapExport": "ComponentList"`. `exclude` filters schema files. Every schema must expose a nonempty static `name`; malformed TypeScript, missing files/exports, circular references, dynamic names, function-generated objects and unresolved spreads produce errors even when the rule's severity is `warning`. Map values are not evaluated. Keep registration objects declarative so their keys can be checked.
+`files` and `mapFile` are required. Each file uses its default export, or its sole named value export. Set `mapExport` and/or `schemaExport` when the file has several named exports, for example `"mapExport": "ComponentList"`. `exclude` filters schema files. Every schema must expose a nonempty static `name`; malformed TypeScript, missing files/exports, circular references, dynamic names, function-generated objects and unresolved spreads produce errors even when the rule's severity is `warning`. Map values are not evaluated. Keep registration objects declarative so their keys can be checked. Enum-member keys and namespace-import spreads (`import * as`) currently produce explicit errors. The real boilerplate at `d9be2a3` uses neither: both of its custom schemas pass against its full map. Copies of those schemas and a trimmed map are preserved in the regression fixtures.
 
 Both rules support the normal `message`, JSON and `--format ai` output. Under `--since`, `reserved-names` reports changed project files; `registered-in-map` checks all matching schemas because a changed map or imported spread can remove a registration for an unchanged schema.
 

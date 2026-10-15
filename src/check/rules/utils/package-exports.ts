@@ -1,7 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import ts from "typescript";
-import { createStaticProject, StaticReadError } from "./typescript-static";
+import { createStaticProject, nodeLocation, StaticReadError } from "./typescript-static";
+
+export interface PackageExportWarning {
+  file: string;
+  line: number;
+  column: number;
+  message: string;
+}
+
+export interface PackageExportNames {
+  names: Set<string>;
+  warnings: PackageExportWarning[];
+}
 
 function packageManifest(root: string, name: string): string {
   let directory = resolve(root);
@@ -22,7 +33,11 @@ function targets(value: unknown): string[] {
   return [];
 }
 
-export function readPackageExportNames(root: string, name: string): Set<string> {
+const CODE_PATH = /\.[cm]?[jt]sx?$/;
+
+export function readPackageExportNames(
+  ts: typeof import("typescript"), root: string, name: string, includeTypes: boolean
+): PackageExportNames {
   const manifest = packageManifest(root, name);
   let pkg: Record<string, unknown>;
   try {
@@ -33,27 +48,33 @@ export function readPackageExportNames(root: string, name: string): Set<string> 
   }
   const packageRoot = dirname(manifest);
   const names = new Set<string>();
+  const typeNames = new Set<string>();
+  const componentSubpaths = new Set<string>();
+  const warnings: PackageExportWarning[] = [];
   const entries: string[] = [];
-  const addName = (subpath: string) => {
-    const value = basename(subpath).replace(/\.(?:[cm]?[jt]sx?|json)$/, "");
-    if (value !== "." && value !== "default" && !value.includes("*")) names.add(value);
+  const addSubpath = (subpath: string) => {
+    // An exports-map path describes a module, not necessarily a component.
+    // Lowercase names are reserved only if discovered as actual identifiers below.
+    if (/\.[^/]+$/.test(subpath) && !CODE_PATH.test(subpath)) return;
+    const value = basename(subpath).replace(/(?:\.d)?\.[cm]?[jt]sx?$/, "");
+    if (/^[A-Z][A-Za-z0-9]*$/.test(value)) componentSubpaths.add(value);
   };
   const exports = pkg["exports"];
   const exportEntries = exports && typeof exports === "object" && !Array.isArray(exports) &&
     Object.keys(exports).some((key) => key.startsWith(".")) ? Object.entries(exports) : [[".", exports] as const];
   for (const [subpath, value] of exportEntries) {
-    if (value === null) continue;
-    if (subpath !== "." && !subpath.includes("*")) addName(subpath);
-    const paths = targets(value);
+    if (value === null || (/\.[^/]+$/.test(subpath) && !CODE_PATH.test(subpath))) continue;
+    const paths = targets(value).filter((path) => CODE_PATH.test(path));
+    if (paths.length === 0) continue; // package.json, styles and assets expose no identifiers.
+    if (subpath !== "." && !subpath.includes("*")) addSubpath(subpath);
     const declarations = paths.filter((path) => /\.d\.[cm]?ts$/.test(path));
     for (const target of declarations.length > 0 ? declarations : paths) {
-      if (!/\.[cm]?[jt]sx?$/.test(target)) continue;
       if (target.includes("*")) {
         const star = target.indexOf("*");
         for (const file of new Bun.Glob(target).scanSync({ cwd: packageRoot, onlyFiles: true })) {
           const normalized = file.startsWith("./") ? file : `./${file}`;
           const captured = normalized.slice(star, normalized.length - target.slice(star + 1).length);
-          if (subpath.includes("*")) addName(subpath.replaceAll("*", captured));
+          if (subpath.includes("*")) addSubpath(subpath.replaceAll("*", captured));
           entries.push(resolve(packageRoot, file));
         }
       } else if (existsSync(resolve(packageRoot, target))) {
@@ -65,24 +86,57 @@ export function readPackageExportNames(root: string, name: string): Set<string> 
   for (const fallback of [pkg["types"], pkg["typings"], "index.d.ts"]) {
     if (typeof fallback === "string" && existsSync(resolve(packageRoot, fallback))) entries.push(resolve(packageRoot, fallback));
   }
+  let foundExports = false;
   if (entries.length > 0) {
-    const project = createStaticProject(packageRoot, [...new Set(entries)]);
+    const project = createStaticProject(ts, packageRoot, [...new Set(entries)]);
     for (const source of project.program.getSourceFiles()) {
       project.assertParsed(source);
-      // A missing barrel target must not silently produce an incomplete name list.
       for (const statement of source.statements) {
         if (ts.isExportDeclaration(statement) && statement.moduleSpecifier) {
           const module = project.checker.getSymbolAtLocation(statement.moduleSpecifier);
-          if (!module) throw new StaticReadError(`Cannot resolve exported module ${statement.moduleSpecifier.getText()}`, source.fileName);
+          if (!module) {
+            const specifier = (statement.moduleSpecifier as import("typescript").StringLiteral).text;
+            if (!specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("#")) {
+              const peer = specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
+              warnings.push({
+                ...nodeLocation(statement.moduleSpecifier),
+                message: `Cannot resolve re-export from missing peer "${peer}" (${specifier}); continuing with available exports`,
+              });
+            } else {
+              throw new StaticReadError(`Cannot resolve exported module ${statement.moduleSpecifier.getText()}`, source.fileName);
+            }
+          }
         }
       }
     }
     for (const entry of entries) {
-      for (const symbol of project.exportsOf(project.source(entry))) {
-        if (!["default", "export=", "__esModule"].includes(symbol.name)) names.add(symbol.name);
+      const source = project.source(entry);
+      for (const symbol of project.exportsOf(source)) {
+        if (["export=", "__esModule"].includes(symbol.name)) continue;
+        const actual = symbol.flags & ts.SymbolFlags.Alias ? project.checker.getAliasedSymbol(symbol) : symbol;
+        if (!actual.declarations?.length && !actual.valueDeclaration) continue;
+        if (!(actual.flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Type | ts.SymbolFlags.Namespace))) continue;
+        foundExports = true;
+        if (symbol.name === "default") {
+          if (!project.isValueExport(symbol, source)) {
+            const declaration = actual.declarations?.[0];
+            if (declaration && (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration))) {
+              typeNames.add(declaration.name.text);
+            }
+          }
+          continue;
+        }
+        if (project.isValueExport(symbol, source)) names.add(symbol.name);
+        else typeNames.add(symbol.name);
       }
     }
   }
-  if (names.size === 0) throw new StaticReadError(`No exported names could be read from "${name}" (exports map or type declarations required)`, manifest);
-  return names;
+  if (includeTypes) for (const name of typeNames) names.add(name);
+  for (const name of componentSubpaths) {
+    if (includeTypes || !typeNames.has(name) || names.has(name)) names.add(name);
+  }
+  if (names.size === 0 && !foundExports && warnings.length === 0) {
+    throw new StaticReadError(`No exported names could be read from "${name}" (exports map or type declarations required)`, manifest);
+  }
+  return { names, warnings };
 }

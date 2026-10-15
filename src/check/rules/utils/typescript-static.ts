@@ -1,6 +1,6 @@
 /** Static TypeScript reads only: never import or execute the project's modules. */
 import { relative, resolve } from "node:path";
-import ts from "typescript";
+import type ts from "typescript";
 
 export class StaticReadError extends Error {
   constructor(message: string, readonly file: string, readonly line?: number, readonly column?: number) {
@@ -23,7 +23,7 @@ export function relativeFile(root: string, file: string): string {
   return relative(root, file).split("\\").join("/");
 }
 
-export function unwrapExpression(expression: ts.Expression): ts.Expression {
+function unwrapExpression(ts: typeof import("typescript"), expression: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression) ||
     ts.isTypeAssertionExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isNonNullExpression(expression)) {
     expression = expression.expression;
@@ -31,7 +31,7 @@ export function unwrapExpression(expression: ts.Expression): ts.Expression {
   return expression;
 }
 
-export function createStaticProject(root: string, files: readonly string[]) {
+export function createStaticProject(ts: typeof import("typescript"), root: string, files: readonly string[]) {
   const configPath = ts.findConfigFile(root, ts.sys.fileExists);
   let configured: ts.CompilerOptions = {};
   if (configPath) {
@@ -75,6 +75,44 @@ export function createStaticProject(root: string, files: readonly string[]) {
     const symbol = checker.getSymbolAtLocation(file);
     return symbol ? checker.getExportsOfModule(symbol) : [];
   };
+  const isValueExport = (symbol: ts.Symbol, file: ts.SourceFile, seen = new Set<ts.SourceFile>()): boolean => {
+    if (seen.has(file) || !(unalias(symbol).flags & ts.SymbolFlags.Value)) return false;
+    const next = new Set(seen).add(file);
+    const fromModule = (specifier: ts.Expression, name: string): boolean => {
+      const module = checker.getSymbolAtLocation(specifier);
+      if (!module) return false;
+      const target = checker.getExportsOfModule(module).find((candidate) => candidate.name === name);
+      const targetFile = module.declarations?.find(ts.isSourceFile);
+      return Boolean(target && targetFile && isValueExport(target, targetFile, next));
+    };
+    const own = symbol.declarations?.filter((declaration) => declaration.getSourceFile() === file) ?? [];
+    if (own.length > 0) {
+      return own.some((declaration) => {
+        if (ts.isExportSpecifier(declaration)) {
+          if (declaration.isTypeOnly || declaration.parent.parent.isTypeOnly) return false;
+          const reExport = declaration.parent.parent;
+          if (reExport.moduleSpecifier) return fromModule(reExport.moduleSpecifier, (declaration.propertyName ?? declaration.name).text);
+          const target = checker.getExportSpecifierLocalTargetSymbol(declaration);
+          const importDeclaration = target?.declarations?.find(ts.isImportSpecifier);
+          if (importDeclaration) {
+            const clause = importDeclaration.parent.parent;
+            return !importDeclaration.isTypeOnly && !clause.isTypeOnly &&
+              fromModule(clause.parent.moduleSpecifier, (importDeclaration.propertyName ?? importDeclaration.name).text);
+          }
+          return !target?.declarations?.some((node) => ts.isImportClause(node) && node.isTypeOnly ||
+            ts.isNamespaceImport(node) && node.parent.isTypeOnly);
+        }
+        if (ts.isNamespaceExport(declaration)) return !declaration.parent.isTypeOnly;
+        return true;
+      });
+    }
+    // getExportsOfModule also returns values reached only through `export type *`.
+    // Follow runtime star exports explicitly so those names do not leak through.
+    return file.statements.some((statement) => {
+      if (!ts.isExportDeclaration(statement) || statement.isTypeOnly || statement.exportClause || !statement.moduleSpecifier) return false;
+      return fromModule(statement.moduleSpecifier, symbol.name);
+    });
+  };
   const expressionOf = (symbol: ts.Symbol, at: ts.Node): ts.Expression => {
     const actual = unalias(symbol);
     const declaration = actual.valueDeclaration ?? actual.declarations?.[0];
@@ -92,7 +130,7 @@ export function createStaticProject(root: string, files: readonly string[]) {
   };
   const exportedExpression = (file: string, exportName?: string): ts.Expression => {
     const module = source(file);
-    const exports = exportsOf(module).filter((symbol) => Boolean(unalias(symbol).flags & ts.SymbolFlags.Value));
+    const exports = exportsOf(module).filter((symbol) => isValueExport(symbol, module));
     const selected = exportName ? exports.find((symbol) => symbol.name === exportName)
       : exports.find((symbol) => symbol.name === "default") ?? (exports.length === 1 ? exports[0] : undefined);
     if (!selected) {
@@ -106,7 +144,7 @@ export function createStaticProject(root: string, files: readonly string[]) {
     return symbol ? expressionOf(symbol, expression) : staticError(expression, `Cannot resolve "${expression.getText()}"`);
   };
   const withExpression = <T>(expression: ts.Expression, seen: Set<ts.Node>, read: (value: ts.Expression, next: Set<ts.Node>) => T): T => {
-    const value = unwrapExpression(expression);
+    const value = unwrapExpression(ts, expression);
     assertParsed(value.getSourceFile());
     if (seen.has(value)) return staticError(value, "Circular reference in static value");
     const next = new Set(seen).add(value);
@@ -126,7 +164,7 @@ export function createStaticProject(root: string, files: readonly string[]) {
     return staticError(name, "Cannot resolve object property name");
   };
   const objectEntries = (expression: ts.Expression, seen = new Set<ts.Node>()): Map<string, ts.Expression | undefined> => {
-    const reference = unwrapExpression(expression);
+    const reference = unwrapExpression(ts, expression);
     if (ts.isIdentifier(reference) || ts.isPropertyAccessExpression(reference)) {
       if (seen.has(reference)) return staticError(reference, "Circular reference in static value");
       const symbol = checker.getSymbolAtLocation(ts.isPropertyAccessExpression(reference) ? reference.name : reference);
@@ -160,5 +198,5 @@ export function createStaticProject(root: string, files: readonly string[]) {
     });
   };
 
-  return { program, checker, source, exportsOf, exportedExpression, objectEntries, stringValue, assertParsed };
+  return { program, checker, source, exportsOf, isValueExport, exportedExpression, objectEntries, stringValue, assertParsed };
 }

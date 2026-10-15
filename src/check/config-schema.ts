@@ -87,6 +87,7 @@ export const RULE_SCHEMAS = {
   "reserved-names": z.object({
     ...baseRuleShape,
     type: z.literal("reserved-names"),
+    includeTypes: z.boolean().optional(),
     package: nonEmpty.regex(/^(?:@[a-zA-Z0-9_.-]+\/)?[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/, "must be a package name"),
     files: nonEmpty,
     compare: z.array(z.enum(["file-name", "folder-name", "exported-identifier", "component-name"])).min(1).optional(),
