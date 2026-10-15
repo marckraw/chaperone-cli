@@ -2,6 +2,20 @@ import type { RuleType } from "../check/config-schema";
 
 /** One valid example of every rule type. */
 export const VALID_RULES: Record<RuleType, Record<string, unknown>> = {
+  "reserved-names": {
+    type: "reserved-names",
+    id: "no-backpack-shadowing",
+    severity: "error",
+    package: "@ef-global/backpack",
+    files: "src/components/**/*.{ts,tsx}",
+  },
+  "registered-in-map": {
+    type: "registered-in-map",
+    id: "schema-is-registered",
+    severity: "error",
+    files: "src/**/*.sb.ts",
+    mapFile: "src/components/component-list.ts",
+  },
   regex: {
     type: "regex",
     id: "no-console",

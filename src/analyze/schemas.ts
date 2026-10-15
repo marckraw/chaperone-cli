@@ -7,7 +7,8 @@ import { RULE_SCHEMAS, type RuleType } from "../check/config-schema";
  * The list is deliberately restricted to rules that can be derived from prose
  * instructions. Structural rules (import-boundary, public-api, forbidden-import,
  * retired-path, react-component-count, directive-export-pattern), merge checks
- * (comment-integrity, unique-capture) and copy limits (repeated-literal, duplicate-code) need
+ * (comment-integrity, unique-capture), copy limits (repeated-literal, duplicate-code), and
+ * package/schema checks (reserved-names, registered-in-map) need
  * knowledge of the codebase and are written by hand. Every extracted rule is validated again with the
  * full config schema before it is added.
  */

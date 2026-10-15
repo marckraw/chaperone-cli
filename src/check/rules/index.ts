@@ -24,8 +24,12 @@ import { runCommentIntegrityRule, isCommentIntegrityRule } from "./comment-integ
 import { runUniqueCaptureRule, isUniqueCaptureRule } from "./unique-capture";
 import { runRepeatedLiteralRule, isRepeatedLiteralRule } from "./repeated-literal";
 import { runDuplicateCodeRule, isDuplicateCodeRule } from "./duplicate-code";
+import { runReservedNamesRule, isReservedNamesRule } from "./reserved-names";
+import { runRegisteredInMapRule, isRegisteredInMapRule } from "./registered-in-map";
 
 export * from "./types";
+export { runReservedNamesRule, isReservedNamesRule } from "./reserved-names";
+export { runRegisteredInMapRule, isRegisteredInMapRule } from "./registered-in-map";
 export { runFilePairingRule, isFilePairingRule } from "./file-pairing";
 export { runFileContractRule, isFileContractRule } from "./file-contract";
 export { runRegexRule, isRegexRule } from "./regex";
@@ -68,6 +72,15 @@ async function dispatchRule(rule: CustomRule, options: RuleRunnerOptions, onDebu
   const typeLabel = rule.source ? `${rule.type}*` : rule.type;
   const excludeInfo = rule.exclude?.length ? ` (excluding: ${rule.exclude.join(", ")})` : "";
   const debug = (message: string) => onDebug?.(`  [${typeLabel}] ${rule.id}: ${message}${excludeInfo}`);
+
+  if (isReservedNamesRule(rule)) {
+    debug(`checking names reserved by "${rule.package}" in "${rule.files}"`);
+    return runReservedNamesRule(rule, options);
+  }
+  if (isRegisteredInMapRule(rule)) {
+    debug(`checking schemas in "${rule.files}" against "${rule.mapFile}"`);
+    return runRegisteredInMapRule(rule, options);
+  }
 
   if (isFilePairingRule(rule)) {
     debug(`checking pairing for "${rule.files}"`);

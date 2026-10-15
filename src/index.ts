@@ -46,6 +46,8 @@ export type {
   LoadedConfig,
   ChaperoneConfig,
   CustomRule,
+  ReservedNamesRule,
+  RegisteredInMapRule,
   FilePairingRule,
   FileContractRule,
   RegexRule,

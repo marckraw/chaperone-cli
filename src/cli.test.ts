@@ -375,3 +375,49 @@ describe("chaperone baseline", () => {
     expect(runCli(["baseline"], cwd).exitCode).toBe(2);
   });
 });
+
+describe("Backbase rule canaries", () => {
+  const reserved = {
+    type: "reserved-names", id: "no-backpack-shadowing", severity: "error",
+    package: "@ef-global/backpack", files: "src/components/**/*.{ts,tsx}",
+  };
+  const registered = {
+    type: "registered-in-map", id: "schema-is-registered", severity: "error",
+    files: "src/**/*.sb.ts", mapFile: "src/components/component-list.ts",
+  };
+  const fixtures = {
+    "node_modules/@ef-global/backpack/package.json": '{"exports":{".":{"types":"./index.d.ts"}}}',
+    "node_modules/@ef-global/backpack/index.d.ts": "export declare const Button: unknown;",
+    "src/components/CustomHero.tsx": "export const CustomHero = () => <section />;",
+    "src/hero.sb.ts": 'export default { name: "hero", schema: {} };',
+    "src/components/component-list.ts": 'const LocalComponents = { hero: 1 }; export default { ...LocalComponents };',
+  };
+
+  test.each(["json", "ai"])("reserved-names canary fails in %s and passes after renaming", (format) => {
+    const cwd = projectWithRules([reserved], { ...fixtures, "src/components/Button.tsx": "export const Button = () => <button />;" });
+    const failed = runCli(["check", "--format", format], cwd);
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stdout).toContain("no-backpack-shadowing");
+    expect(failed.stdout).toContain("Button");
+    if (format === "json") {
+      expect(JSON.parse(failed.stdout).results).toHaveLength(1);
+      expect(JSON.parse(failed.stdout).results[0].rule).toBe("reserved-names/no-backpack-shadowing");
+    }
+    const clean = projectWithRules([reserved], fixtures);
+    expect(runCli(["check", "--format", format], clean).exitCode).toBe(0);
+  });
+
+  test.each(["json", "ai"])("registered-in-map canary fails in %s and passes after registration", (format) => {
+    const cwd = projectWithRules([registered], { ...fixtures, "src/components/component-list.ts": "export default {};" });
+    const failed = runCli(["check", "--format", format], cwd);
+    expect(failed.exitCode).toBe(1);
+    expect(failed.stdout).toContain("schema-is-registered");
+    expect(failed.stdout).toContain("hero");
+    if (format === "json") {
+      expect(JSON.parse(failed.stdout).results).toHaveLength(1);
+      expect(JSON.parse(failed.stdout).results[0].rule).toBe("registered-in-map/schema-is-registered");
+    }
+    const clean = projectWithRules([registered], fixtures);
+    expect(runCli(["check", "--format", format], clean).exitCode).toBe(0);
+  });
+});

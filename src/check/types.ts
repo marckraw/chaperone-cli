@@ -433,9 +433,33 @@ export interface UniqueCaptureRule extends BaseRule, AIGeneratedMetadata {
 }
 
 /**
- * Union of all custom rule types
+ * Reserve names exported by an installed package.
  */
+export interface ReservedNamesRule extends BaseRule, AIGeneratedMetadata {
+  type: "reserved-names";
+  package: string;
+  files: string;
+  compare?: Array<"file-name" | "folder-name" | "exported-identifier" | "component-name">;
+  caseSensitive?: boolean;
+  allow?: string[];
+  message?: string;
+}
+
+export interface RegisteredInMapRule extends BaseRule, AIGeneratedMetadata {
+  type: "registered-in-map";
+  files: string;
+  mapFile: string;
+  /** Default export, or the sole named export. Set explicitly when there are several. */
+  mapExport?: string;
+  /** Default export, or the sole named export, in each schema file. */
+  schemaExport?: string;
+  message?: string;
+}
+
+/** Union of all custom rule types. */
 export type CustomRule =
+  | ReservedNamesRule
+  | RegisteredInMapRule
   | FilePairingRule
   | FileContractRule
   | RegexRule

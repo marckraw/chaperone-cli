@@ -33,6 +33,8 @@ export const RULE_TYPES = [
   "unique-capture",
   "repeated-literal",
   "duplicate-code",
+  "reserved-names",
+  "registered-in-map",
 ] as const;
 
 export type RuleType = (typeof RULE_TYPES)[number];
@@ -82,6 +84,23 @@ const pairShape = z.object({
 });
 
 export const RULE_SCHEMAS = {
+  "reserved-names": z.object({
+    ...baseRuleShape,
+    type: z.literal("reserved-names"),
+    package: nonEmpty.regex(/^(?:@[a-zA-Z0-9_.-]+\/)?[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/, "must be a package name"),
+    files: nonEmpty,
+    compare: z.array(z.enum(["file-name", "folder-name", "exported-identifier", "component-name"])).min(1).optional(),
+    caseSensitive: z.boolean().optional(),
+    allow: stringList.optional(),
+  }),
+  "registered-in-map": z.object({
+    ...baseRuleShape,
+    type: z.literal("registered-in-map"),
+    files: nonEmpty,
+    mapFile: nonEmpty,
+    mapExport: nonEmpty.optional(),
+    schemaExport: nonEmpty.optional(),
+  }),
   regex: z.object({
     ...baseRuleShape,
     type: z.literal("regex"),
@@ -594,6 +613,8 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
       break;
     }
     case "component-location":
+    case "reserved-names":
+    case "registered-in-map":
       glob(["files"]);
       break;
     case "react-component-count":
