@@ -243,6 +243,7 @@ chaperone check                # Check the codebase
 chaperone check --format ai    # Markdown report for AI agents
 chaperone check --format json  # Machine-readable report
 chaperone check --since origin/master   # Custom rules only look at changed files
+chaperone baseline             # Record legacy violations, so check fails only on new ones
 
 chaperone analyze              # Extract rules from CLAUDE.md, AGENTS.md, ...
 
@@ -269,6 +270,7 @@ chaperone version              # The version that runs here, and the launcher's
 | `--copy` | Copy the remaining problems to the clipboard (ai format) |
 | `--no-progress` | Disable the progress spinner |
 | `--debug` | Print rule execution details (to stderr) |
+| `--no-baseline` | Ignore `.chaperone-baseline.json` and report every violation (see [Baselines](#baselines)) |
 | `--since <git-ref>` | Custom rules only check files changed since the merge base of `<git-ref>` and `HEAD`, plus uncommitted and untracked files. Layer membership, module discovery and symbol targets still use every file, as do `unique-capture`, `repeated-literal` and `duplicate-code`, which count and compare every file but report only what involves a changed one; `package-fields` and `command` rules always run; TypeScript, ESLint and Prettier still check the whole project. The report says the run was limited. |
 
 Unknown options, missing option values and unknown `--format` values are usage errors (exit code 2).
@@ -279,7 +281,7 @@ Unknown options, missing option values and unknown `--format` values are usage e
 |------|---------|
 | `0` | The check passed (warnings do not fail it) |
 | `1` | The check ran and found at least one error |
-| `2` | Chaperone could not do its job: invalid configuration, usage error (unknown option, bad value, unknown command, bad `--since` ref), a pinned version (or machine default) that cannot be installed, an invalid machine default, or internal error. Nothing is reported as passed. |
+| `2` | Chaperone could not do its job: invalid configuration, an invalid `.chaperone-baseline.json`, usage error (unknown option, bad value, unknown command, bad `--since` ref), a pinned version (or machine default) that cannot be installed, an invalid machine default, or internal error. Nothing is reported as passed. |
 
 ### Output and environment
 
@@ -288,6 +290,27 @@ Unknown options, missing option values and unknown `--format` values are usage e
 - Text output is coloured only on an interactive terminal. `NO_COLOR` disables colours, `FORCE_COLOR=1` forces them.
 - The progress spinner only appears for text output on an interactive terminal.
 - Chaperone checks GitHub for a newer release once a day. Set `CHAPERONE_NO_UPDATE_CHECK=1` to switch this off (it is also off when `CI` is set).
+
+## Baselines
+
+A project that adopts Chaperone, or a new rule, usually already breaks it in places. A baseline records those violations so the check fails only on new ones: legacy code may stay as it is, anything new still fails, and the baseline can only shrink.
+
+```bash
+chaperone baseline                 # Write .chaperone-baseline.json; commit it
+chaperone check                    # Fails only on violations that are not in it
+chaperone baseline                 # Later: removes the entries that no longer occur
+chaperone baseline --allow-growth  # Adds new violations too, on purpose, and lists them
+```
+
+- **What is recorded.** One entry per violation: the rule id, the file and a fingerprint, a hash of the offending text (the regex match, or the source line the result points at) and the message, with whitespace collapsed and numbers ignored. Line numbers are not part of it, so a violation that moves stays baselined. Edit the offending line and it is new. Identical violations in one file share an entry with a `count`: one more than recorded is new. Each entry also keeps the message, so the file reads well in review.
+- **`check` with a baseline.** When `.chaperone-baseline.json` exists in the project root, only the violations it does not cover count: they are the results, the error and warning counts, and the exit code. Every format reports the rest apart. Text and ai output give a "Baselined" count and a count per rule, never the list, so an agent works on what it introduced. `--format json` puts them under `baseline.baselined` (counts and the full `results`), and keeps `results` and `summary` to the new ones. `--no-baseline` shows everything.
+- **Stale entries.** An entry that no longer occurs is reported as stale (`baseline.stale` in JSON). It never fails the check. Run `chaperone baseline` to remove it.
+- **It only shrinks.** `chaperone baseline` with a baseline already there removes stale entries and adds nothing. New violations are listed instead, and it exits 1 when one of them is an error. `--allow-growth` adds them and prints every entry it added, so the growth shows up in review as well as in the diff.
+- **What is not checked is not removed.** An entry whose tool was skipped (no ESLint config, `enabled: false`) is kept and reported as not verified, not as stale; so is a custom rule's entry in a file outside `--since`. `chaperone baseline` refuses to run (exit code 2) while a tool cannot run, because its violations would look fixed.
+
+**When to use one:** an existing codebase, or a new rule or stricter preset rolled out over code written before it; an agent's Stop hook that must hold the session to its own changes without blocking it over everything that came before.
+
+**When not to:** a new project, or a rule you can fix everywhere today. Fix those instead. Don't use a baseline to quiet a rule you disagree with (change the rule), or to get a failing branch through: `--allow-growth` is for deliberate decisions, and the reviewer sees each one in the diff of `.chaperone-baseline.json`.
 
 ## Configuration
 
@@ -903,6 +926,8 @@ All three formats contain the same facts:
 `--format json` adds machine-readable fields: `status` (`passed`, `passed-with-gaps`, `failed`), `gaps`, `runners`, `rules` (per-rule `status`, `filesChecked`, counts, notices), `disabledRules`, `diagnostics` and `since`, next to the existing `success`, `summary`, `results` and `bySource`.
 
 `--format ai` is Markdown written for coding agents: results are grouped by rule with their context, capped at 20 per rule (with an "… and N more" line), and a "Not Fully Checked" section lists skipped rules.
+
+With a [baseline](#baselines), every format separates the new violations (the results) from the baselined ones, and lists stale entries; JSON adds a `baseline` object.
 
 ## `chaperone analyze`
 
