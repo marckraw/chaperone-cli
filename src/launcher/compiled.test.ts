@@ -9,9 +9,10 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { cleanupProjects, makeProject } from "../testing/fixtures";
+import { cleanupProjects, makeProject, writeFiles } from "../testing/fixtures";
+import { FAKE_BACKPACK, REGISTERED_IN_MAP, REGISTERED_SCHEMAS, RESERVED_NAMES } from "../testing/backbase-fixtures";
 import {
   ASSET,
   cachedFiles,
@@ -31,6 +32,53 @@ import {
 const BINARY = process.env["CHAPERONE_TEST_BINARY"] ? resolve(process.env["CHAPERONE_TEST_BINARY"]) : null;
 const compiledTest = BINARY && process.platform !== "win32" ? test : test.skip;
 const SLOW = 20_000;
+
+for (const fixture of [
+  {
+    rule: RESERVED_NAMES,
+    files: { ...FAKE_BACKPACK, "src/components/Button.tsx": "export const Button = () => <button />;" },
+    symbol: "Button",
+  },
+  {
+    rule: REGISTERED_IN_MAP,
+    files: { ...REGISTERED_SCHEMAS, "src/components/component-list.ts": "export default {};" },
+    symbol: "hero",
+  },
+]) {
+  compiledTest(`the compiled binary checks ${fixture.rule.type} without TypeScript installed in the fixture`, async () => {
+    const box = sandbox(null, { rules: { custom: [fixture.rule] } });
+    writeFiles(box.project, fixture.files);
+    const result = await run(box, offlineUrl(), ["check", "--format", "json"]);
+    expect(result.exitCode).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output.results).toHaveLength(1);
+    expect(output.results[0]).toMatchObject({
+      rule: `${fixture.rule.type}/${fixture.rule.id}`,
+      context: { symbol: fixture.symbol },
+    });
+  }, SLOW);
+
+  compiledTest(`the compiled binary preserves ${fixture.rule.type} baseline entries on rule errors`, async () => {
+    const box = sandbox(null, { rules: { custom: [fixture.rule] } });
+    writeFiles(box.project, fixture.files);
+    expect((await run(box, offlineUrl(), ["baseline"])).exitCode).toBe(0);
+    expect((await run(box, offlineUrl(), ["check", "--format", "json"])).exitCode).toBe(0);
+    const path = join(box.project, ".chaperone-baseline.json");
+    const before = readFileSync(path, "utf8");
+    if (fixture.rule.type === "reserved-names") {
+      rmSync(join(box.project, "node_modules/@ef-global/backpack"), { recursive: true });
+    } else {
+      writeFiles(box.project, { "src/components/component-list.ts": "export default { hero: ;" });
+    }
+    expect((await run(box, offlineUrl(), ["baseline", "--allow-growth"])).exitCode).toBe(2);
+    expect(readFileSync(path, "utf8")).toBe(before);
+    const checked = await run(box, offlineUrl(), ["check", "--format", "json"]);
+    expect(checked.exitCode).toBe(1);
+    const output = JSON.parse(checked.stdout);
+    expect(output.baseline.stale).toEqual([]);
+    expect(output.baseline.unverified).toEqual(JSON.parse(before).entries);
+  }, SLOW);
+}
 
 const servers: ReleaseServer[] = [];
 afterEach(() => {

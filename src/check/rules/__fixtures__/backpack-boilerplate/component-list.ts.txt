@@ -1,0 +1,24 @@
+import type { Components } from '@/components/all-components';
+import { Page } from '@/components/Page';
+
+/*
+ *
+ * Components that exist only as schema, without
+ * React implementation.
+ *
+ * */
+const InternalComponents = {
+  settings: 'internal',
+};
+
+const LocalComponents = {};
+
+const components: Partial<Record<Components, any>> = {
+  page: Page,
+  ...InternalComponents,
+  ...LocalComponents,
+};
+
+export const allComponents = {
+  ...components,
+};

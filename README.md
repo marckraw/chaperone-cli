@@ -271,7 +271,7 @@ chaperone version              # The version that runs here, and the launcher's
 | `--no-progress` | Disable the progress spinner |
 | `--debug` | Print rule execution details (to stderr) |
 | `--no-baseline` | Ignore `.chaperone-baseline.json` and report every violation (see [Baselines](#baselines)) |
-| `--since <git-ref>` | Custom rules only check files changed since the merge base of `<git-ref>` and `HEAD`, plus uncommitted and untracked files. Layer membership, module discovery and symbol targets still use every file, as do `unique-capture`, `repeated-literal` and `duplicate-code`, which count and compare every file but report only what involves a changed one; `package-fields` and `command` rules always run; TypeScript, ESLint and Prettier still check the whole project. The report says the run was limited. |
+| `--since <git-ref>` | Custom rules only check files changed since the merge base of `<git-ref>` and `HEAD`, plus uncommitted and untracked files. Layer membership, module discovery and symbol targets still use every file, as do `unique-capture`, `repeated-literal` and `duplicate-code`, which count and compare every file but report only what involves a changed one; `registered-in-map` always checks all schemas, since a map edit can remove registrations for unchanged files; `package-fields` and `command` rules always run; TypeScript, ESLint and Prettier still check the whole project. The report says the run was limited. |
 
 Unknown options, missing option values and unknown `--format` values are usage errors (exit code 2).
 
@@ -407,7 +407,7 @@ Custom rules live in `rules.custom`. Every rule has these common fields:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | `string` | Yes | One of the 17 types below. |
+| `type` | `string` | Yes | One of the 19 types below. |
 | `id` | `string` | Yes | Unique identifier. A rule with the same id as a preset rule replaces it. |
 | `severity` | `"error" \| "warning"` | Yes | Errors make `check` exit with 1; warnings are only reported. |
 | `exclude` | `string[]` | No | Extra exclude patterns for this rule (same semantics as the global `exclude`). |
@@ -697,6 +697,51 @@ In files that start with a directive (such as `"use client"`), every runtime nam
 ```
 
 Type-only exports and default exports are not checked; `export { a as b }`, `export * as ns from` and enums are.
+
+### `reserved-names`
+
+Reserve the names exported by an installed package, so custom components cannot shadow the design system. Package code is never executed. Chaperone reads explicit subpaths and wildcard targets from the package's `exports` map, reads named exports from its entry points (including declaration barrels and aliases), and falls back to `types`, `typings` or `index.d.ts` for older packages. The package is resolved from the checked project's `node_modules`, including ancestor directories; it is read even though dependency folders are excluded from the project scan. Missing packages, unreadable local exports and invalid declarations produce errors. A re-export from an uninstalled peer produces a warning naming the peer while available names are still checked. If no names can be read, the rule reports an error instead of passing.
+
+```json
+{
+  "type": "reserved-names",
+  "id": "no-backpack-shadowing",
+  "severity": "error",
+  "package": "@ef-global/backpack",
+  "files": "src/components/**/*.{ts,tsx}",
+  "compare": ["file-name", "folder-name", "exported-identifier", "component-name"],
+  "caseSensitive": true,
+  "includeTypes": false,
+  "allow": ["Link"]
+}
+```
+
+`package` and `files` are required. `compare` defaults to all four modes: the file basename without its extension, its immediate folder name, its exported identifiers, and its React component declarations (including non-exported ones, using the same detection as `react-component-count`). Select any nonempty subset. `caseSensitive` defaults to `true`; the allow list uses the same comparison. Only value exports are reserved by default. Set `includeTypes: true` to include type-only exports too (from both the package and matching project files). Actual value utilities such as `cn` remain value exports; add them to `allow` if reuse is intentional. Metadata, styles and asset subpaths are skipped. A code subpath contributes its own name only when it is a PascalCase component name or an actual exported identifier; a `./utils` module alone does not reserve `utils`. `exclude` filters the matched project files. Each reserved name is reported once per file, even when several modes find it. For example, `src/components/Button/Button.tsx` fails if Backpack exports `Button`. An allow list contains intentional exceptions, rather than a hand-maintained list of Backpack names.
+
+### `registered-in-map`
+
+Require each matched schema's `name` to appear as a key in a component map. Both files are read with the TypeScript compiler API, without executing project code. Keys from local and imported object spreads count, including re-exports and TypeScript path aliases. Finite object keys declared by installed packages also count; open dictionaries such as `Record<string, Component>` cannot prove registration and produce an error. String literals, references to initialized constants, computed literal keys, shorthand properties, parentheses, `as const` and `satisfies` are supported. Only the map's top-level keys count; comments, nested keys and component values do not register a schema.
+
+```json
+{
+  "type": "registered-in-map",
+  "id": "schema-is-registered",
+  "severity": "error",
+  "files": "src/**/*.sb.ts",
+  "mapFile": "src/components/component-list.ts"
+}
+```
+
+For example, `export default { name: "custom_hero", schema: {} }` requires a map such as:
+
+```ts
+import { LocalComponents } from "./local-components";
+export default { ...LocalComponents, custom_hero: CustomHero };
+```
+
+`files` and `mapFile` are required. Each file uses its default export, or its sole named value export. Set `mapExport` and/or `schemaExport` when the file has several named exports, for example `"mapExport": "ComponentList"`. `exclude` filters schema files. Every schema must expose a nonempty static `name`; malformed TypeScript, missing files/exports, circular references, dynamic names, function-generated objects and unresolved spreads produce errors even when the rule's severity is `warning`. Map values are not evaluated. Keep registration objects declarative so their keys can be checked. Enum-member keys and namespace-import spreads (`import * as`) currently produce explicit errors. The real boilerplate at `d9be2a3` uses neither: both of its custom schemas pass against its full map. Copies of those schemas and a trimmed map are preserved in the regression fixtures.
+
+Both rules support the normal `message`, JSON and `--format ai` output and committed baselines. A “Cannot check…” error is never baselined: existing entries stay unverified, and `baseline` exits 2 without writing, including with `--allow-growth`. Under `--since`, `reserved-names` reports changed project files; `registered-in-map` checks all matching schemas because a changed map or imported spread can remove a registration for an unchanged schema.
 
 The next four types catch what review lets through: what a merge breaks (`comment-integrity`, `unique-capture`) and copies (`repeated-literal`, `duplicate-code`). They report the same way: each finding once, with every place it involves under "Locations" (`context.locations` in JSON), and a `message` comes first with the finding in parentheses after it.
 
