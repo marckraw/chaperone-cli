@@ -1,6 +1,7 @@
 import { basename, dirname, extname } from "node:path";
 import type { CheckResult, ReservedNamesRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { ruleError } from "../rule-error";
 import { getRuleContext } from "./utils/rule-context";
 import { createStaticProject, nodeLocation, relativeFile, StaticReadError } from "./utils/typescript-static";
 import { readPackageExportNames } from "./utils/package-exports";
@@ -15,7 +16,7 @@ export async function runReservedNamesRule(rule: ReservedNamesRule, options: Rul
   const normalize = (name: string) => rule.caseSensitive === false ? name.toLowerCase() : name;
   const allowed = new Set((rule.allow ?? []).map(normalize));
   const reportError = (error: unknown, fallback: string) => {
-    results.push({
+    results.push(ruleError({
       file: error instanceof StaticReadError ? relativeFile(options.cwd, error.file) : fallback,
       line: error instanceof StaticReadError ? error.line : undefined,
       column: error instanceof StaticReadError ? error.column : undefined,
@@ -23,7 +24,7 @@ export async function runReservedNamesRule(rule: ReservedNamesRule, options: Rul
       message: `Cannot check reserved names: ${error instanceof Error ? error.message : String(error)}`,
       severity: "error",
       source: "custom",
-    });
+    }));
   };
   try {
     const ts = (await import("typescript")).default;

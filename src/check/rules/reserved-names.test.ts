@@ -135,6 +135,21 @@ describe("reserved-names", () => {
     expect(result.results[1]).toMatchObject({ severity: "error", context: { symbol: "Card" } });
   });
 
+  test.each([
+    'export * from "@missing/peer";',
+    'export { Card } from "@missing/peer";',
+  ])("all names behind missing peers are a rule error, even with warning severity", async (missing) => {
+    const result = await run({
+      "node_modules/@ef-global/backpack/package.json": '{"exports":{".":{"types":"./index.d.ts"}}}',
+      "node_modules/@ef-global/backpack/index.d.ts": missing,
+      "src/components/Card.tsx": "export const Card = () => <article />;",
+    }, { severity: "warning" });
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({ severity: "error", ruleError: true });
+    expect(result.results[0]?.message).toContain("No exported names could be read");
+    expect(result.results[0]?.message).toContain("@missing/peer");
+  });
+
   test("file, folder and exported identifiers can be selected independently", async () => {
     const files = { "src/components/Button/Other.ts": "\nexport const Card = 1;" };
     expect((await run(files, { compare: ["file-name"] })).results).toEqual([]);

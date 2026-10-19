@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { CheckResult, RegisteredInMapRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { ruleError } from "../rule-error";
 import { getRuleContext } from "./utils/rule-context";
 import { createStaticProject, nodeLocation, relativeFile, StaticReadError, staticError } from "./utils/typescript-static";
 import { findingMessage } from "./utils/findings";
@@ -11,7 +12,7 @@ export async function runRegisteredInMapRule(rule: RegisteredInMapRule, options:
   const results: CheckResult[] = [];
   const reportError = (error: unknown, fallback: string) => {
     const detail = error instanceof Error ? error.message : String(error);
-    results.push({
+    results.push(ruleError({
       file: relativeFile(options.cwd, error instanceof StaticReadError ? error.file : resolve(options.cwd, fallback)),
       line: error instanceof StaticReadError ? error.line : undefined,
       column: error instanceof StaticReadError ? error.column : undefined,
@@ -19,7 +20,7 @@ export async function runRegisteredInMapRule(rule: RegisteredInMapRule, options:
       message: `Cannot check registration: ${detail}`,
       severity: "error",
       source: "custom",
-    });
+    }));
   };
 
   // The complete schema set is intentional: a changed map (or imported spread) can

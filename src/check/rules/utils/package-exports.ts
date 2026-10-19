@@ -86,7 +86,6 @@ export function readPackageExportNames(
   for (const fallback of [pkg["types"], pkg["typings"], "index.d.ts"]) {
     if (typeof fallback === "string" && existsSync(resolve(packageRoot, fallback))) entries.push(resolve(packageRoot, fallback));
   }
-  let foundExports = false;
   if (entries.length > 0) {
     const project = createStaticProject(ts, packageRoot, [...new Set(entries)]);
     for (const source of project.program.getSourceFiles()) {
@@ -116,7 +115,6 @@ export function readPackageExportNames(
         const actual = symbol.flags & ts.SymbolFlags.Alias ? project.checker.getAliasedSymbol(symbol) : symbol;
         if (!actual.declarations?.length && !actual.valueDeclaration) continue;
         if (!(actual.flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Type | ts.SymbolFlags.Namespace))) continue;
-        foundExports = true;
         if (symbol.name === "default") {
           if (!project.isValueExport(symbol, source)) {
             const declaration = actual.declarations?.[0];
@@ -135,8 +133,9 @@ export function readPackageExportNames(
   for (const name of componentSubpaths) {
     if (includeTypes || !typeNames.has(name) || names.has(name)) names.add(name);
   }
-  if (names.size === 0 && !foundExports && warnings.length === 0) {
-    throw new StaticReadError(`No exported names could be read from "${name}" (exports map or type declarations required)`, manifest);
+  if (names.size === 0) {
+    const missing = warnings.length > 0 ? `; ${warnings.map((warning) => warning.message).join("; ")}` : "";
+    throw new StaticReadError(`No exported names could be read from "${name}" (exports map or type declarations required)${missing}`, manifest);
   }
   return { names, warnings };
 }
