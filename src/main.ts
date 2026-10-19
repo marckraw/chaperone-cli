@@ -5,7 +5,20 @@
 
 import { VERSION } from "./version";
 import { runInit } from "./init";
-import { checkAndFormat, createCheckOptions, ConfigError, formatDiagnostic } from "./check";
+import { resolve } from "node:path";
+import { check, checkAndFormat, createCheckOptions, ConfigError, formatDiagnostic, isRuleError } from "./check";
+import {
+  BASELINE_FILENAME,
+  BaselineError,
+  fingerprintResults,
+  formatBaselineUpdate,
+  readBaselineFile,
+  readCommittedBaseline,
+  updateBaseline,
+  verifiableIn,
+  writeBaselineFile,
+} from "./check/baseline";
+import { joinPath, readTextFile } from "./utils/fs";
 import { formatAI, OUTPUT_FORMATS } from "./check/formatters";
 import type { OutputFormat } from "./check/formatters";
 import { copyToClipboard } from "./utils/clipboard";
@@ -27,6 +40,7 @@ USAGE:
 COMMANDS:
   init        Initialize Chaperone configuration
   check       Check codebase for convention violations
+  baseline    Record existing violations, so check fails only on new ones
   analyze     Extract rules from AI instruction files (CLAUDE.md, etc.)
   pin         Pin the Chaperone version this repository runs
   default     Set the version this machine runs where nothing is pinned
@@ -46,6 +60,10 @@ CHECK OPTIONS:
   --debug               Show detailed rule execution info (stderr)
   --since <git-ref>     Custom rules only check files changed since <git-ref>
                         (merge base with HEAD, plus uncommitted and untracked files)
+  --no-baseline         Ignore ${BASELINE_FILENAME} and report every violation
+
+BASELINE OPTIONS:
+  --allow-growth        Also add violations that are not in the baseline yet
 
 GENERAL OPTIONS:
   --help, -h            Show help
@@ -77,6 +95,7 @@ EXAMPLES:
   chaperone check --fix --copy           Fix and copy remaining to clipboard
   chaperone check --format ai            AI-friendly output
   chaperone check --format json          JSON output for CI/CD
+  chaperone baseline                     Record legacy violations (only shrinks after that)
   chaperone analyze                      Extract rules from AI files
   chaperone analyze --dry-run            Preview without saving
   chaperone pin                          Pin this version in .chaperone.json
@@ -103,7 +122,13 @@ OPTIONS:
   --since <git-ref>     Custom rules only check files changed since <git-ref>
                         (merge base with HEAD, plus uncommitted and untracked files);
                         TypeScript, ESLint and Prettier still check the whole project
+  --no-baseline         Ignore ${BASELINE_FILENAME} and report every violation
   --help, -h            Show this help message
+
+BASELINE:
+  When ${BASELINE_FILENAME} exists (written by "chaperone baseline"), only
+  violations it does not cover count: the baselined ones are reported apart and
+  never fail the check, and entries that no longer occur are reported as stale.
 
 OUTPUT:
   Results go to stdout; progress, debug output and notices go to stderr.
@@ -135,6 +160,47 @@ const CHECK_FLAGS = {
   noWarnings: { names: ["--no-warnings"], type: "boolean" },
   debug: { names: ["--debug"], type: "boolean" },
   since: { names: ["--since"], type: "string" },
+  noBaseline: { names: ["--no-baseline"], type: "boolean" },
+} satisfies Record<string, FlagSpec>;
+
+const BASELINE_HELP_TEXT = `
+chaperone baseline - Record existing violations, so check fails only on new ones
+
+USAGE:
+  chaperone baseline [options]
+
+Runs the check and writes ${BASELINE_FILENAME} in the project root: one entry per
+violation (rule id, file and a fingerprint of the offending text, so it survives
+lines moving). Commit the file. From then on "chaperone check" fails only on
+violations that are not in it.
+
+The baseline only shrinks. Run again, it removes the entries that no longer occur
+and adds nothing: new violations are listed and must be fixed. --allow-growth adds
+them too, and prints every entry it added. When the file is missing but git has it
+committed, the committed one is the starting point: deleting it cannot grow it.
+
+OPTIONS:
+  --config, -c <path>   Config file path (default: .chaperone.json)
+  --cwd <path>          Working directory (default: current directory)
+  --allow-growth        Also add violations that are not in the baseline yet
+  --help, -h            Show this help message
+
+EXIT CODES:
+  0  the baseline was written, or is up to date
+  1  violations that are not in the baseline remain (they were not added)
+  2  configuration error, invalid baseline, a tool or rule that could not
+     check (nothing is written then), usage error or internal error
+
+EXAMPLES:
+  chaperone baseline                     Create the baseline, or shrink it
+  chaperone baseline --allow-growth      Add new violations on purpose
+`;
+
+const BASELINE_FLAGS = {
+  help: { names: ["--help", "-h"], type: "boolean" },
+  config: { names: ["--config", "-c"], type: "string" },
+  cwd: { names: ["--cwd"], type: "string" },
+  allowGrowth: { names: ["--allow-growth"], type: "boolean" },
 } satisfies Record<string, FlagSpec>;
 
 function printConfigError(error: ConfigError, format: OutputFormat): number {
@@ -215,6 +281,7 @@ async function runCheck(args: string[], launch: LaunchContext): Promise<number> 
     debug: parsedArgs.debug ?? false,
     color: format === "text" && shouldUseColor(process.stdout),
     since: parsedArgs.since,
+    useBaseline: !parsedArgs.noBaseline,
     onProgress: showProgress
       ? (step, status) => {
           if (status === "start") {
@@ -295,6 +362,16 @@ async function runCheck(args: string[], launch: LaunchContext): Promise<number> 
       }
       return EXIT.ERROR;
     }
+    if (error instanceof BaselineError) {
+      console.error(`Error: ${error.message}`);
+      console.error(`Fix or delete ${BASELINE_FILENAME}, or run with --no-baseline (exit code 2).`);
+      if (format === "json") {
+        console.log(
+          JSON.stringify({ success: false, error: "invalid-baseline", exitCode: EXIT.ERROR, message: error.message }, null, 2)
+        );
+      }
+      return EXIT.ERROR;
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);
     if (format === "json") {
@@ -302,6 +379,81 @@ async function runCheck(args: string[], launch: LaunchContext): Promise<number> 
         JSON.stringify({ success: false, error: "internal-error", exitCode: EXIT.ERROR, message }, null, 2)
       );
     }
+    return EXIT.ERROR;
+  }
+}
+
+/**
+ * `chaperone baseline`: run the check without the baseline, then create the baseline or shrink it.
+ */
+async function runBaseline(args: string[]): Promise<number> {
+  let parsedArgs;
+  try {
+    parsedArgs = parseArgs(args, BASELINE_FLAGS);
+  } catch (error) {
+    if (error instanceof UsageError) {
+      console.error(`Error: ${error.message}`);
+      console.error('Run "chaperone baseline --help" for usage information.');
+      return EXIT.ERROR;
+    }
+    throw error;
+  }
+
+  if (parsedArgs.help) {
+    console.log(BASELINE_HELP_TEXT);
+    return EXIT.OK;
+  }
+
+  const cwd = resolve(parsedArgs.cwd ?? process.cwd());
+  try {
+    const working = readBaselineFile(cwd);
+    const previous = working ?? (await readCommittedBaseline(cwd));
+    if (process.stderr.isTTY) {
+      console.error("Running the check…");
+    }
+    const summary = await check(createCheckOptions({ cwd, configPath: parsedArgs.config, useBaseline: false }));
+
+    // A tool that could not run reports no violations: its entries would look fixed
+    const broken = (summary.runners ?? []).filter((runner) => runner.status === "error");
+    if (broken.length > 0) {
+      for (const runner of broken) {
+        console.error(`Error: ${runner.label} could not run: ${runner.reason ?? "unknown error"}`);
+      }
+      console.error(`${BASELINE_FILENAME} was not changed. Fix the tool and run again (exit code 2).`);
+      return EXIT.ERROR;
+    }
+
+    // A rule that could not check would record its own error, or make its entries look fixed
+    const ruleErrors = summary.results.filter(isRuleError);
+    if (ruleErrors.length > 0) {
+      for (const result of ruleErrors) {
+        console.error(`Error: ${result.rule} could not check${result.file ? ` (${result.file})` : ""}: ${result.message}`);
+      }
+      console.error(`${BASELINE_FILENAME} was not changed. Fix the rule and run again (exit code 2).`);
+      return EXIT.ERROR;
+    }
+
+    const update = updateBaseline(
+      previous,
+      fingerprintResults(summary.results, (file) => readTextFile(joinPath(cwd, file))),
+      {
+        allowGrowth: parsedArgs.allowGrowth ?? false,
+        isVerifiable: verifiableIn({ runners: summary.runners, unreadable: summary.unreadable }),
+      }
+    );
+    // Restoring the committed file is a change even when its entries are unchanged
+    if (update.changed || (previous && !working)) {
+      writeBaselineFile(cwd, update.baseline);
+    }
+    await writeReport(
+      formatBaselineUpdate(update, BASELINE_FILENAME, { previousFrom: previous && !working ? "head" : "working-tree" })
+    );
+    return update.fresh.some((result) => result.severity === "error") ? EXIT.VIOLATIONS : EXIT.OK;
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      return printConfigError(error, "text");
+    }
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
     return EXIT.ERROR;
   }
 }
@@ -343,6 +495,8 @@ export async function runCommand(args: string[], launch: LaunchContext): Promise
     console.log(HELP_TEXT);
   } else if (command === "check") {
     exitCode = await runCheck(args.slice(1), launch);
+  } else if (command === "baseline") {
+    exitCode = await runBaseline(args.slice(1));
   } else if (command === "init") {
     exitCode = await runInit(args.slice(1));
   } else if (command === "analyze") {

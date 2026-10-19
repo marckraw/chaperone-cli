@@ -116,6 +116,7 @@ async function runOne(
           file: "",
           rule: `${runner.name}/runner-error`,
           message: `${runner.label} runner crashed: ${message}`,
+          ruleError: true,
           severity: "error",
           source: runner.name,
         },

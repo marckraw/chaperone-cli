@@ -1,5 +1,8 @@
+import { describeEntry } from "../baseline/baseline";
 import type { CheckResult, CheckSummary } from "../types";
 import {
+  baselinedByRule,
+  describeBaselined,
   describeDiagnostic,
   describeRunner,
   describeSkipped,
@@ -105,6 +108,9 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
   lines.push(`**Files checked:** ${summary.totalFiles}`);
   lines.push(`**Errors:** ${summary.totalErrors}`);
   lines.push(`**Warnings:** ${summary.totalWarnings}`);
+  if (summary.baseline) {
+    lines.push(`**Baselined:** ${describeBaselined(summary)}, not counted and not listed`);
+  }
   lines.push(`**Duration:** ${formatDuration(summary.duration)}`);
   lines.push("");
 
@@ -139,8 +145,13 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
     lines.push("");
   }
 
+  if (summary.baseline) {
+    lines.push(...formatBaselineSection(summary));
+  }
+
   if (listed.length === 0) {
-    lines.push(summary.results.length === 0 ? "No issues found." : "No errors found (warnings hidden by --quiet).");
+    const none = summary.baseline ? "No new issues found." : "No issues found.";
+    lines.push(summary.results.length === 0 ? none : "No errors found (warnings hidden by --quiet).");
     return lines.join("\n");
   }
 
@@ -216,6 +227,10 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
       actions.push(`Run \`eslint --fix\` to auto-fix ${eslintFixable} ESLint issue(s)`);
     }
 
+    const stale = summary.baseline?.stale.length ?? 0;
+    if (stale > 0) {
+      actions.push(`Run \`chaperone baseline\` to remove ${stale} stale baseline entr${stale === 1 ? "y" : "ies"}`);
+    }
     if (omitted > 0) {
       actions.push(`${omitted} result(s) were omitted above; fix the listed ones, then re-run the check`);
     }
@@ -241,4 +256,37 @@ export function formatAI(summary: CheckSummary, options: AIFormatOptions = {}): 
   }
 
   return lines.join("\n");
+}
+
+/**
+ * What the baseline covered and which entries are stale. Baselined violations are legacy: counted
+ * per rule, never listed, so an agent works on what it introduced.
+ */
+function formatBaselineSection(summary: CheckSummary): string[] {
+  const report = summary.baseline!;
+  const lines = ["### Baseline", ""];
+  lines.push(
+    `Violations recorded in ${code(report.file)} are legacy: they do not fail the check and are not listed below. Everything listed below is new.`
+  );
+  lines.push("");
+  for (const { rule, count } of baselinedByRule(summary)) {
+    lines.push(`- ${code(rule)}: ${count} baselined`);
+  }
+  if (report.stale.length > 0) {
+    lines.push("");
+    lines.push(
+      `${report.stale.length} stale entr${report.stale.length === 1 ? "y no longer occurs" : "ies no longer occur"}; run \`chaperone baseline\` to remove ${report.stale.length === 1 ? "it" : "them"}:`
+    );
+    for (const entry of report.stale) {
+      lines.push(`- ${code(describeEntry(entry))}`);
+    }
+  }
+  if (report.unverified.length > 0) {
+    lines.push("");
+    lines.push(
+      `${report.unverified.length} entr${report.unverified.length === 1 ? "y was" : "ies were"} not verified: the tool or file was not checked in this run.`
+    );
+  }
+  lines.push("");
+  return lines;
 }

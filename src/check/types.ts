@@ -1,3 +1,5 @@
+import type { BaselineEntry } from "./baseline/baseline";
+
 /**
  * Unified check result format
  */
@@ -11,6 +13,12 @@ export interface CheckResult {
   source?: string; // The source of the rule (typescript, eslint, custom, ai-instructions)
   fixable?: boolean;
   suggestion?: string;
+  /**
+   * The rule (or tool) could not check, so this is not a violation: an invalid pattern, a crash,
+   * a file it could not parse. Never baselined; the rule's baseline entries count as unverified.
+   * Set it with `ruleError()` from ./rule-error.
+   */
+  ruleError?: true;
   // Additional context for debugging/fixing
   context?: {
     matchedText?: string; // For regex: the text that matched
@@ -100,6 +108,22 @@ export interface CheckSummary {
   since?: { ref: string; changedFiles: number };
   /** Directories (ending in "/") and files that could not be read, so were not checked */
   unreadable?: string[];
+  /** Set when a baseline was applied: `results` and the counts then hold only the new violations */
+  baseline?: BaselineReport;
+}
+
+/**
+ * What applying `.chaperone-baseline.json` did to a check.
+ */
+export interface BaselineReport {
+  /** The baseline file, relative to cwd */
+  file: string;
+  /** Violations the baseline covers: not counted, never fail the check */
+  baselined: CheckResult[];
+  /** Entries that no longer occur: `chaperone baseline` removes them */
+  stale: BaselineEntry[];
+  /** Entries that did not occur, but whose tool or file was not checked this run */
+  unverified: BaselineEntry[];
 }
 
 /**
@@ -119,6 +143,8 @@ export interface CheckOptions {
   color?: boolean;
   /** Limit file-scoped custom rules to files changed since this git ref */
   since?: string;
+  /** Apply `.chaperone-baseline.json` when it exists (default: true) */
+  useBaseline?: boolean;
 }
 
 /**

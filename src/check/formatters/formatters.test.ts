@@ -173,3 +173,44 @@ describe("locations", () => {
     expect(JSON.parse(formatJson(summary({ results: [repeated] }))).results[0].context.locations).toHaveLength(3);
   });
 });
+
+describe("baseline", () => {
+  const legacy = result({ file: "src/legacy.ts", line: 9 });
+  const fresh = result({ file: "src/new.ts", line: 2 });
+  const withBaseline = summary({
+    results: [fresh],
+    baseline: {
+      file: ".chaperone-baseline.json",
+      baselined: [legacy],
+      stale: [{ rule: "regex/no-console", file: "src/fixed.ts", fingerprint: "abc", message: "No console.log" }],
+      unverified: [],
+    },
+  });
+
+  test.each(["text", "json", "ai"] as const)("%s separates new from baselined, and reports stale entries", (outputFormat) => {
+    const output = format(withBaseline, outputFormat);
+    expect(output).toContain("src/new.ts");
+    expect(output).toContain("src/fixed.ts");
+    if (outputFormat === "json") {
+      const json = JSON.parse(output);
+      expect(json.results.map((entry: { file: string }) => entry.file)).toEqual(["src/new.ts"]);
+      expect(json.baseline.baselined).toMatchObject({ errors: 1, warnings: 0 });
+      expect(json.baseline.baselined.results[0].file).toBe("src/legacy.ts");
+    } else {
+      // Legacy violations are counted per rule, never listed with the new ones
+      expect(output).not.toContain("src/legacy.ts");
+      expect(output).toMatch(/regex\/no-console`?: 1( baselined)?/);
+    }
+  });
+
+  test("text heads the listed violations as new", () => {
+    expect(formatText(withBaseline)).toContain("New violations (not in .chaperone-baseline.json):");
+  });
+
+  test("without a baseline nothing changes", () => {
+    const plain = summary({ results: [fresh] });
+    expect(formatText(plain)).not.toContain("Baseline");
+    expect(formatAI(plain)).not.toContain("Baseline");
+    expect(JSON.parse(formatJson(plain)).baseline).toBeUndefined();
+  });
+});

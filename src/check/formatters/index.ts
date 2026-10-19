@@ -48,6 +48,10 @@ function filterSummary(summary: CheckSummary, noWarnings: boolean): CheckSummary
     ...summary,
     results: filteredResults,
     bySource: filteredBySource,
+    baseline: summary.baseline && {
+      ...summary.baseline,
+      baselined: summary.baseline.baselined.filter((r) => r.severity === "error"),
+    },
   };
 }
 

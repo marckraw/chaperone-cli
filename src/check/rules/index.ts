@@ -146,7 +146,7 @@ async function dispatchRule(rule: CustomRule, options: RuleRunnerOptions, onDebu
 function errorResult(ruleId: string, ruleName: string, message: string): RuleResult {
   return {
     ruleId,
-    results: [{ file: ".chaperone.json", rule: ruleName, message, severity: "error", source: "custom" }],
+    results: [{ file: ".chaperone.json", rule: ruleName, message, severity: "error", source: "custom", ruleError: true }],
   };
 }
 
@@ -181,6 +181,7 @@ export async function runAllRules(
           file: ".chaperone.json",
           rule: `config/${ruleId}`,
           message: `Invalid rule: ${formatDiagnostic(diagnostic)}`,
+          ruleError: true,
           severity: "error",
           source: "custom",
         })),

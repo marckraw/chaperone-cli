@@ -106,6 +106,7 @@ export async function runSymbolReferenceRule(
       file: ".chaperone.json",
       rule: `symbol-reference/${rule.id}`,
       message: `Invalid symbolPattern regex: ${rule.symbolPattern}`,
+      ruleError: true,
       severity: "error",
       source: "custom",
     });

@@ -153,3 +153,37 @@ export function statusLine(summary: CheckSummary): string {
   const gaps = describeGaps(summary);
   return gaps.length > 0 ? `PASSED, but not everything was checked: ${gaps.join("; ")}` : "PASSED";
 }
+
+/**
+ * How many baselined results are errors and warnings.
+ */
+export function baselinedCounts(summary: CheckSummary): { errors: number; warnings: number } {
+  const baselined = summary.baseline?.baselined ?? [];
+  const errors = baselined.filter((result) => result.severity === "error").length;
+  return { errors, warnings: baselined.length - errors };
+}
+
+/**
+ * "2 (1 error, 1 warning)": the baselined count with its split.
+ */
+export function describeBaselined(summary: CheckSummary): string {
+  const { errors, warnings } = baselinedCounts(summary);
+  const parts = [
+    ...(errors > 0 ? [`${errors} error${errors === 1 ? "" : "s"}`] : []),
+    ...(warnings > 0 ? [`${warnings} warning${warnings === 1 ? "" : "s"}`] : []),
+  ];
+  return `${errors + warnings}${parts.length > 0 ? ` (${parts.join(", ")})` : ""}`;
+}
+
+/**
+ * Baselined results per rule, most first: "regex/no-todo: 3".
+ */
+export function baselinedByRule(summary: CheckSummary): Array<{ rule: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const result of summary.baseline?.baselined ?? []) {
+    counts.set(result.rule, (counts.get(result.rule) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([rule, count]) => ({ rule, count }))
+    .sort((a, b) => b.count - a.count || a.rule.localeCompare(b.rule));
+}

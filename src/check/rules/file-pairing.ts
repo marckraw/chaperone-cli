@@ -31,6 +31,7 @@ export async function runFilePairingRule(
           file: ".chaperone.json",
           rule: `file-pairing/${rule.id}`,
           message: `Invalid pair.from regex: ${rule.pair.from}`,
+          ruleError: true,
           severity: "error",
           source: "custom",
         },

@@ -1,6 +1,9 @@
 import { createPalette, type Palette } from "../../utils/ansi";
 import type { CheckResult, CheckSummary } from "../types";
+import { describeEntry } from "../baseline/baseline";
 import {
+  baselinedByRule,
+  describeBaselined,
   describeDiagnostic,
   describeRunner,
   formatDuration,
@@ -117,6 +120,9 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
       `${colors.dim}Warnings:${colors.reset} ${summary.totalWarnings > 0 ? colors.yellow : colors.green}${summary.totalWarnings}${colors.reset}`
     );
   }
+  if (summary.baseline) {
+    lines.push(`${colors.dim}Baselined:${colors.reset} ${describeBaselined(summary)}, not counted`);
+  }
   lines.push(`${colors.dim}Duration:${colors.reset} ${formatDuration(summary.duration)}`);
   lines.push("");
 
@@ -178,6 +184,10 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
     lines.push("");
   }
 
+  if (summary.baseline) {
+    lines.push(...formatBaselineSection(summary, colors));
+  }
+
   // Per-source breakdown
   const grouped = groupBySource(summary.results);
   const sources = orderedSources(grouped);
@@ -212,6 +222,11 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
 
   // Filter to only errors in quiet mode or noWarnings mode
   const resultFilter = quiet || noWarnings ? (r: CheckResult) => r.severity === "error" : () => true;
+
+  if (summary.baseline && summary.results.some(resultFilter)) {
+    lines.push(`${colors.bold}New violations${colors.reset} (not in ${summary.baseline.file}):`);
+    lines.push("");
+  }
 
   for (const source of sources) {
     const results = grouped[source]?.filter(resultFilter);
@@ -249,6 +264,38 @@ export function formatText(summary: CheckSummary, options: TextFormatOptions = {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * What the baseline covered, and the entries that no longer occur.
+ */
+function formatBaselineSection(summary: CheckSummary, colors: Palette): string[] {
+  const report = summary.baseline!;
+  const lines = [`${colors.bold}Baseline${colors.reset} (${report.file}):`];
+  const byRule = baselinedByRule(summary);
+  if (byRule.length > 0) {
+    lines.push(`  ${colors.dim}–${colors.reset} baselined, not counted:`);
+    for (const { rule, count } of byRule) {
+      lines.push(`      ${rule}: ${count}`);
+    }
+  } else {
+    lines.push(`  ${colors.dim}–${colors.reset} nothing baselined occurred in this run`);
+  }
+  if (report.stale.length > 0) {
+    lines.push(
+      `  ${colors.yellow}!${colors.reset} ${report.stale.length} stale entr${report.stale.length === 1 ? "y" : "ies"} no longer occur${report.stale.length === 1 ? "s" : ""}; run ${colors.cyan}chaperone baseline${colors.reset} to remove ${report.stale.length === 1 ? "it" : "them"}:`
+    );
+    for (const entry of report.stale) {
+      lines.push(`      ${describeEntry(entry)}`);
+    }
+  }
+  if (report.unverified.length > 0) {
+    lines.push(
+      `  ${colors.yellow}○${colors.reset} ${report.unverified.length} entr${report.unverified.length === 1 ? "y was" : "ies were"} not verified: ${report.unverified.length === 1 ? "its" : "their"} tool or file was not checked in this run`
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 /**

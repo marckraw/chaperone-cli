@@ -9,6 +9,7 @@ import type { CheckOptions, CheckResult, CheckSummary } from "./types";
 import { createRuleContext } from "./rules/utils/rule-context";
 import type { FileIndex } from "../utils/file-index";
 import { changedFilesSince } from "../utils/git";
+import { BASELINE_FILENAME, fingerprintResults, matchBaseline, readBaselineFile, verifiableIn } from "./baseline";
 
 export * from "./types";
 export * from "./config-loader";
@@ -16,6 +17,8 @@ export { formatDiagnostic, validateRule, RULE_TYPES, REMOVED_RULE_TYPES } from "
 export { runAllTools } from "./runners";
 export { runAllRules } from "./rules";
 export { format, formatText, formatJson, formatAI } from "./formatters";
+export { BaselineError, BASELINE_FILENAME } from "./baseline";
+export { ruleError, isRuleError } from "./rule-error";
 
 /**
  * Progress callback for reporting check progress.
@@ -40,10 +43,11 @@ export interface CheckOptionsWithProgress extends CheckOptions {
  * Main check function - orchestrates all checks
  *
  * @throws {ConfigError} when the configuration is invalid
+ * @throws {BaselineError} when `.chaperone-baseline.json` is not a valid baseline
  */
 export async function check(options: CheckOptionsWithProgress): Promise<CheckSummary> {
   const startTime = Date.now();
-  const { configPath, fix, include, exclude, since, onProgress, onDebug } = options;
+  const { configPath, fix, include, exclude, since, useBaseline = true, onProgress, onDebug } = options;
   const cwd = resolve(options.cwd);
   if (!isDirectory(cwd)) {
     throw new UsageError(`directory not found: ${cwd}`);
@@ -52,6 +56,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
   // Load and validate configuration (throws ConfigError on invalid config)
   onProgress?.("Loading configuration", "start");
   const { config, diagnostics, disabledRules } = loadConfigWithDiagnostics(cwd, configPath);
+  const baseline = useBaseline ? readBaselineFile(cwd) : null;
   onProgress?.("Loading configuration", "done");
 
   // Get effective include/exclude patterns
@@ -106,8 +111,23 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     );
   }
 
-  // Combine results
-  const allResults: CheckResult[] = [...toolResults.results, ...ruleResults.results];
+  // Combine results; with a baseline, only the violations it does not cover count
+  let allResults: CheckResult[] = [...toolResults.results, ...ruleResults.results];
+  let baselineReport: CheckSummary["baseline"];
+  if (baseline) {
+    const match = matchBaseline(
+      fingerprintResults(allResults, (file) => context.index.read(file)),
+      baseline.entries,
+      verifiableIn({ runners: toolResults.summaries, changedFiles, unreadable: context.index.unreadable() })
+    );
+    allResults = match.fresh;
+    baselineReport = {
+      file: BASELINE_FILENAME,
+      baselined: match.baselined,
+      stale: match.stale,
+      unverified: match.unverified,
+    };
+  }
 
   // Calculate summary
   const totalErrors = allResults.filter((r) => r.severity === "error").length;
@@ -127,6 +147,7 @@ export async function check(options: CheckOptionsWithProgress): Promise<CheckSum
     disabledRules,
     since: since && changedFiles ? { ref: since, changedFiles: changedFiles.size } : undefined,
     unreadable: context.index.unreadable(),
+    baseline: baselineReport,
   };
 
   return summary;
