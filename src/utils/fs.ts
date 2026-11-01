@@ -2,14 +2,43 @@
  * File system utilities for Chaperone
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /**
  * Check if a file exists at the given path
  */
 export function fileExists(path: string): boolean {
   return existsSync(path);
+}
+
+/**
+ * Whether `path` (relative to `root`) exists with exactly this case in every segment. On a
+ * case-insensitive filesystem (macOS and Windows by default), existsSync finds `Fancard/` for
+ * `FanCard/`; this reads each directory and compares the names.
+ */
+export function existsCaseExact(
+  root: string,
+  path: string,
+  readDirectory: (directory: string) => string[] = (directory) => readdirSync(directory)
+): boolean {
+  let directory = root;
+  for (const segment of path.split(/[\\/]+/)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      directory = dirname(directory);
+      continue;
+    }
+    let entries: string[];
+    try {
+      entries = readDirectory(directory);
+    } catch {
+      return false;
+    }
+    if (!entries.includes(segment)) return false;
+    directory = join(directory, segment);
+  }
+  return true;
 }
 
 /**

@@ -134,6 +134,36 @@ describe("registered-in-map", () => {
     expect(result.results[0]).toMatchObject({ severity: "warning", message: 'Register the schema (schema "card" is not registered in src/components/component-list.ts)' });
   });
 
+  describe("exceptionsFile", () => {
+    const EXCEPTIONS = "src/components/component-map.exceptions.json";
+    const UNREGISTERED = {
+      "src/settings.sb.ts": 'export default { name: "settings" };',
+      "src/card.sb.ts": 'export default { name: "card" };',
+    };
+
+    test("names it lists, with their reason, pass; the others still fail", async () => {
+      const result = await run({ ...UNREGISTERED, [EXCEPTIONS]: '{ "settings": "Rendered by the layout, never placed", "gone": "No such schema" }' }, { exceptionsFile: EXCEPTIONS });
+      expect(result.results.map((entry) => entry.context?.symbol)).toEqual(["card"]);
+    });
+
+    test("an empty file excepts nothing", async () => {
+      const result = await run({ ...UNREGISTERED, [EXCEPTIONS]: "{}" }, { exceptionsFile: EXCEPTIONS });
+      expect(result.results.map((entry) => entry.context?.symbol).sort()).toEqual(["card", "settings"]);
+    });
+
+    test.each([
+      [undefined, "Cannot read exceptions file"],
+      ["{ settings: 1 }", "is not valid JSON"],
+      ['["settings"]', "must be a JSON object mapping schema names"],
+      ['{ "settings": true }', 'the reason for "settings" must be a string'],
+    ])("a missing or malformed file is a rule error, at the file: %p", async (content, reason) => {
+      const result = await run({ ...UNREGISTERED, ...(content === undefined ? {} : { [EXCEPTIONS]: content }) }, { exceptionsFile: EXCEPTIONS, severity: "warning" });
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0]).toMatchObject({ file: EXCEPTIONS, severity: "error", ruleError: true });
+      expect(result.results[0]?.message).toContain(reason);
+    });
+  });
+
   test("--since still catches map/spread changes affecting unchanged schemas", async () => {
     const cwd = makeProject({ ...REGISTERED_SCHEMAS, "src/components/local.ts": "export const LocalComponents = {};" });
     const context = createRuleContext(cwd, [], { changedFiles: new Set(["src/components/local.ts"]) });

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CheckResult, RegisteredInMapRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
@@ -5,6 +6,47 @@ import { ruleError } from "../rule-error";
 import { getRuleContext } from "./utils/rule-context";
 import { createStaticProject, nodeLocation, relativeFile, StaticReadError, staticError } from "./utils/typescript-static";
 import { findingMessage } from "./utils/findings";
+
+/**
+ * The exceptions file's names and reasons: a JSON object mapping each schema name that is
+ * deliberately absent from the map to the reason, `{ "settings": "Rendered by the layout" }`.
+ *
+ * @throws {Error} when it is not such an object
+ */
+export function parseExceptions(text: string, file: string): Map<string, string> {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${file} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new Error(`${file} must be a JSON object mapping schema names to the reason they are not in the map`);
+  }
+  const exceptions = new Map<string, string>();
+  for (const [name, reason] of Object.entries(data)) {
+    if (typeof reason !== "string") {
+      throw new Error(`${file}: the reason for "${name}" must be a string, got ${JSON.stringify(reason)}`);
+    }
+    exceptions.set(name, reason);
+  }
+  return exceptions;
+}
+
+function readExceptions(cwd: string, file: string): Map<string, string> {
+  const path = resolve(cwd, file);
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    throw new StaticReadError("Cannot read exceptions file", path);
+  }
+  try {
+    return parseExceptions(text, file);
+  } catch (error) {
+    throw new StaticReadError(error instanceof Error ? error.message : String(error), path);
+  }
+}
 
 export async function runRegisteredInMapRule(rule: RegisteredInMapRule, options: RuleRunnerOptions): Promise<RuleResult> {
   const context = getRuleContext(options);
@@ -26,6 +68,7 @@ export async function runRegisteredInMapRule(rule: RegisteredInMapRule, options:
   // The complete schema set is intentional: a changed map (or imported spread) can
   // remove a registration for an unchanged schema. --since must still catch that.
   try {
+    const exceptions = rule.exceptionsFile ? readExceptions(options.cwd, rule.exceptionsFile) : new Map<string, string>();
     const ts = (await import("typescript")).default;
     const project = createStaticProject(ts, options.cwd, [...files, rule.mapFile]);
     const keys = project.objectEntries(project.exportedExpression(rule.mapFile, rule.mapExport));
@@ -36,7 +79,7 @@ export async function runRegisteredInMapRule(rule: RegisteredInMapRule, options:
         if (!nameExpression) staticError(schema, 'Schema has no static "name" property');
         const name = project.stringValue(nameExpression);
         if (!name) staticError(nameExpression, 'Schema "name" must not be empty');
-        if (keys.has(name)) continue;
+        if (keys.has(name) || exceptions.has(name)) continue;
         const location = nodeLocation(nameExpression);
         results.push({
           file,

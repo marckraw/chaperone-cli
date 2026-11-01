@@ -13,6 +13,7 @@ import { z } from "zod";
 import { checkPinValue, isMisspelledPinKey, misspelledPinKeyMessage, PIN_FIELD } from "../launcher/pin";
 import { checkGlobSyntax } from "../utils/glob";
 import { closestMatch, didYouMean } from "../utils/suggest";
+import { CASE_TRANSFORMS, captureGroupsOf } from "./rules/utils/captures";
 import type { ConfigDiagnostic, CustomRule } from "./types";
 
 export const RULE_TYPES = [
@@ -78,6 +79,8 @@ const baseRuleShape = {
   message: z.string().optional().describe("Custom violation message"),
 };
 
+const caseTransform = z.enum(CASE_TRANSFORMS).describe("Case a capture is converted to: fan-stack → FanStack, fanStack, fan-stack, fan_stack");
+
 const pairShape = z.object({
   from: nonEmpty.describe("Regex applied to the file path"),
   to: z.string().describe("Replacement producing the companion path"),
@@ -101,6 +104,7 @@ export const RULE_SCHEMAS = {
     mapFile: nonEmpty,
     mapExport: nonEmpty.optional(),
     schemaExport: nonEmpty.optional(),
+    exceptionsFile: nonEmpty.optional().describe("JSON file mapping schema names to the reason they are not in the map"),
   }),
   regex: z.object({
     ...baseRuleShape,
@@ -120,7 +124,12 @@ export const RULE_SCHEMAS = {
     ...baseRuleShape,
     type: z.literal("file-pairing"),
     files: nonEmpty,
-    pair: pairShape,
+    pair: pairShape.extend({
+      transform: z
+        .union([caseTransform, z.record(z.string(), caseTransform)])
+        .optional()
+        .describe('Case transform for the captures "to" substitutes: every group, or by group number or name'),
+    }),
     mustExist: z.boolean().optional(),
     requireTransformMatch: z.boolean().optional(),
   }),
@@ -136,6 +145,7 @@ export const RULE_SCHEMAS = {
         pattern: nonEmpty,
         group: z.union([z.number().int().nonnegative(), z.string()]).optional(),
         source: z.enum(["path", "basename"]).optional(),
+        transform: caseTransform.optional(),
       })
       .optional(),
     templatedRequiredPatterns: stringList.optional(),
@@ -188,6 +198,10 @@ export const RULE_SCHEMAS = {
     expectedExitCode: z.number().int().optional(),
     stdoutPattern: z.string().optional(),
     stderrPattern: z.string().optional(),
+    output: z
+      .literal("results")
+      .optional()
+      .describe('"results": stdout is a JSON result list, each result reported and baselined on its own'),
   }),
   "symbol-reference": z.object({
     ...baseRuleShape,
@@ -564,10 +578,22 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
       }
       break;
     }
-    case "file-pairing":
+    case "file-pairing": {
       glob(["files"]);
       regex(["pair", "from"]);
+      const from = valueAt(rule, ["pair", "from"]);
+      const transform = valueAt(rule, ["pair", "transform"]);
+      if (typeof from === "string" && compileCheck(from) === null && isPlainObject(transform)) {
+        const groups = captureGroupsOf(new RegExp(from));
+        for (const key of Object.keys(transform)) {
+          const exists = /^\d+$/.test(key) ? Number(key) >= 1 && Number(key) <= groups.count : groups.names.includes(key);
+          if (!exists) {
+            sink.error(`"pair.transform" names group "${key}", which "pair.from" does not have`, ["pair", "transform", key]);
+          }
+        }
+      }
       break;
+    }
     case "file-contract": {
       glob(["files"]);
       for (const field of [
@@ -624,6 +650,16 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
     case "command":
       regex(["stdoutPattern"]);
       regex(["stderrPattern"]);
+      if (rule["output"] === "results") {
+        for (const field of ["stdoutPattern", "stderrPattern"]) {
+          if (rule[field] !== undefined) {
+            sink.error(
+              `"${field}" cannot be combined with "output": "results": the result list is the verdict, so list every violation in it`,
+              [field]
+            );
+          }
+        }
+      }
       break;
     case "symbol-reference":
       glob(["sourceFiles"]);

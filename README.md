@@ -302,7 +302,7 @@ chaperone baseline                 # Later: removes the entries that no longer o
 chaperone baseline --allow-growth  # Adds new violations too, on purpose, and lists them
 ```
 
-- **What is recorded.** One entry per violation: the rule id, the file and a fingerprint. The fingerprint is a hash of the offending text (the regex match and the source line the result points at) and the message, with whitespace collapsed and line references (`line 12`, `lines 3-10`, `src/a.ts:4`) left out. Line numbers are not part of it, so a violation that moves stays baselined. Edit the offending line and it is new: replacing a baselined `console.log(a)` with `console.log(secretToken)` fails. Identical violations in one file share an entry with a `count`: one more than recorded is new. Each entry also keeps the message, so the file reads well in review. Creating a baseline prints every entry it records.
+- **What is recorded.** One entry per violation: the rule id, the file and a fingerprint. The fingerprint is a hash of the offending text (the regex match and the source line the result points at) and the message, with whitespace collapsed and line references (`line 12`, `lines 3-10`, `src/a.ts:4`) left out. A [command rule with `"output": "results"`](#command) lists its violations one by one, and each is recorded like a native rule's. A result's own `fingerprint` replaces the hash. Line numbers are not part of it, so a violation that moves stays baselined. Edit the offending line and it is new: replacing a baselined `console.log(a)` with `console.log(secretToken)` fails. Identical violations in one file share an entry with a `count`: one more than recorded is new. Each entry also keeps the message, so the file reads well in review. Creating a baseline prints every entry it records.
 - **Counts are part of the message.** "has 312 lines" turning into "has 340 lines", or "4 components" into "6", is a new violation. So is a count that got better but still breaks the rule: run `chaperone baseline --allow-growth` to record the new count, and the diff shows the old entry replaced. Strict on purpose: a legacy violation that gets worse must not pass silently.
 - **`check` with a baseline.** When `.chaperone-baseline.json` exists in the project root, only the violations it does not cover count: they are the results, the error and warning counts, and the exit code. Every format reports the rest apart. Text and ai output give a "Baselined" count and a count per rule, never the list, so an agent works on what it introduced. `--format json` puts them under `baseline.baselined` (counts and the full `results`), and keeps `results` and `summary` to the new ones. `--no-baseline` shows everything.
 - **Stale entries.** An entry that no longer occurs is reported as stale (`baseline.stale` in JSON). It never fails the check. Run `chaperone baseline` to remove it.
@@ -461,9 +461,29 @@ Map each matched file to a companion path and require (or forbid) it.
 }
 ```
 
-- `pair.from` (regex, applied to the relative path) and `pair.to` (replacement) are required.
+- `pair.from` (regex, applied to the relative path) and `pair.to` (replacement) are required. `pair.to` uses the syntax of JavaScript's `String.prototype.replace`: `$1`, `$<name>`, `$&`, `$$`.
+- `pair.transform` (optional): a case transform for the captures `pair.to` substitutes, `"pascal"`, `"camel"`, `"kebab"` or `"snake"`. A single value transforms every group. An object transforms the groups it names, by number for `$1` or by name for `$<name>`: `{ "1": "pascal" }`. Words are split at `-`, `_`, spaces and case changes, so `fan-stack`, `fan_stack` and `fanStack` all become `FanStack`. Digits stay in their word, without a split before or after: `sb-2col-grid` becomes `Sb2colGrid`. An acronym is one word, and only its first letter stays capital: `HTMLParser` becomes `HtmlParser`, so a folder named `HTMLParser/` does not match. Naming a group `pair.from` does not have is a configuration error. With `pair.transform`, the companion must exist with exactly that case, even on a filesystem that ignores case (macOS and Windows by default): `Fancard/` does not count for `FanCard/`, so a check that passes locally also passes on Linux CI.
 - `mustExist` (default `true`): `false` forbids the companion.
 - `requireTransformMatch` (default `true`): report files that `pair.from` does not match.
+
+A file can be its own companion, which turns the rule into a folder check. Here `fan-stack.sb.ts` must sit in `FanStack/`. The schema name is captured twice: group 1 becomes the folder in PascalCase, and `base` stays the file name as it is.
+
+```json
+{
+  "type": "file-pairing",
+  "id": "schema-folder",
+  "severity": "error",
+  "files": "src/components/**/*.sb.ts",
+  "pair": {
+    "from": "^src/components/(?:.+/)?((?<base>[a-z0-9]+(?:-[a-z0-9]+)*))\\.sb\\.ts$",
+    "to": "src/components/$1/$<base>.sb.ts",
+    "transform": { "1": "pascal" }
+  },
+  "message": "A schema sits in the folder of its PascalCase name"
+}
+```
+
+`src/components/Cards/fan-card.sb.ts` fails, because `src/components/FanCard/fan-card.sb.ts` does not exist. A schema whose name is not kebab-case does not match `pair.from` and fails as well.
 
 ### `file-contract`
 
@@ -486,7 +506,7 @@ Deterministic content contracts per file, including filename-derived placeholder
 | Field | Description |
 |-------|-------------|
 | `requiredPatterns` / `requiredAnyPatterns` / `forbiddenPatterns` | Regex lists: all must match / at least one must match / none may match. |
-| `captureFromPath` | `{ pattern, group?, source?: "path" \| "basename" }` captures part of the path for `{{capture}}`. |
+| `captureFromPath` | `{ pattern, group?, source?: "path" \| "basename", transform? }` captures part of the path for `{{capture}}`. `transform` converts the capture to `"pascal"`, `"camel"`, `"kebab"` or `"snake"` case first: `fan-stack.tsx` with `"transform": "pascal"` substitutes `FanStack`. Words split as for [`pair.transform`](#file-pairing). |
 | `templatedRequiredPatterns` / `templatedRequiredAnyPatterns` / `templatedForbiddenPatterns` | Same as above with `{{capture}}` (escaped) substituted. |
 | `assertions` | See below. |
 
@@ -571,7 +591,45 @@ Run a command and check its exit code and output.
 }
 ```
 
-Optional: `args`, `cwd` (relative to the project), `timeoutMs` (default 30000), `expectedExitCode` (default 0), `stdoutPattern`, `stderrPattern`. A command that cannot be started or times out is always reported with the reason.
+Optional: `args`, `cwd` (relative to the project), `timeoutMs` (default 30000), `expectedExitCode` (default 0), `stdoutPattern`, `stderrPattern`, `output`. A command that cannot be started or times out is always reported with the reason.
+
+Without `output`, a failing command is one violation at `.chaperone.json`. A baseline records the whole rule, so once the rule fails, a second problem inside the same command passes unnoticed. Set `"output": "results"` and the command lists its violations instead. Each one is reported and [baselined](#baselines) like a native rule's:
+
+```json
+{
+  "type": "command",
+  "id": "placeable",
+  "severity": "error",
+  "command": "bb",
+  "args": ["check", "placeable", "--json"],
+  "output": "results"
+}
+```
+
+The command prints one JSON object to stdout, and nothing else. Logs, progress and warnings go to stderr: any other text on stdout makes the list unreadable, which is a rule-level error (see below).
+
+```json
+{
+  "results": [
+    {
+      "file": "src/components/FanStack/fan-stack.sb.ts",
+      "message": "FanStack is not placeable in any slot",
+      "fingerprint": "placeable:FanStack",
+      "line": 3
+    }
+  ]
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `file` | Yes | The file the violation is in, relative to the project root. Paths are normalized, so `./src/a.ts`, `src//a.ts` and the absolute path are one file. A path outside the project is a rule-level error. |
+| `message` | Yes | What is wrong. With the rule's own `message`, it is reported as `message (this message)`. |
+| `fingerprint` | No | The violation's identity for the baseline, such as the component name. With it, the entry survives the message being reworded or the line moving. Without it, the fingerprint is computed from the message and the line's text, as for native rules. |
+| `line` / `column` | No | 1-based position. |
+| `suggestion` | No | How to fix it. Defaults to running the command directly. |
+
+Other fields are ignored. Every result takes the rule's `severity`. `stdoutPattern` and `stderrPattern` cannot be combined with `"output": "results"`, since the list is the verdict. An empty list passes. The exit code does not change what is reported, so a command may exit 1 when it lists violations. A command that cannot check cannot list results, and that is a rule-level error, not a violation: the error is reported, the rule's baseline entries are kept as unverified, and `chaperone baseline` exits 2 without writing. This covers stdout that is not such an object, a result without `file` or `message`, and a different exit code with an empty list.
 
 ### `symbol-reference`
 
@@ -738,6 +796,14 @@ For example, `export default { name: "custom_hero", schema: {} }` requires a map
 import { LocalComponents } from "./local-components";
 export default { ...LocalComponents, custom_hero: CustomHero };
 ```
+
+`exceptionsFile` (optional) names a JSON file that maps each schema name deliberately left out of the map to the reason, for example the boilerplate's `component-map.exceptions.json`:
+
+```json
+{ "settings": "Site settings, rendered by the layout and never placed" }
+```
+
+Schemas it lists pass. A missing file, invalid JSON, or a reason that is not a string is a “Cannot check registration” error at the file. Names that no schema uses are ignored.
 
 `files` and `mapFile` are required. Each file uses its default export, or its sole named value export. Set `mapExport` and/or `schemaExport` when the file has several named exports, for example `"mapExport": "ComponentList"`. `exclude` filters schema files. Every schema must expose a nonempty static `name`; malformed TypeScript, missing files/exports, circular references, dynamic names, function-generated objects and unresolved spreads produce errors even when the rule's severity is `warning`. Map values are not evaluated. Keep registration objects declarative so their keys can be checked. Enum-member keys and namespace-import spreads (`import * as`) currently produce explicit errors. The real boilerplate at `d9be2a3` uses neither: both of its custom schemas pass against its full map. Copies of those schemas and a trimmed map are preserved in the regression fixtures.
 

@@ -3,8 +3,9 @@
  * fails only on new ones. Pure: reading and writing the file lives in ./file.ts.
  *
  * An entry is a rule id, a file and a fingerprint: a hash of the offending text (the regex match
- * and the source line the result points at) and the message, normalised. Line numbers are never
- * part of it, so a violation that moves stays baselined; one whose line is edited does not.
+ * and the source line the result points at) and the message, normalised, or of the fingerprint
+ * the rule gave the result. Line numbers are never part of it, so a violation that moves stays
+ * baselined; one whose line is edited does not.
  * Identical violations in one file share an entry with a count.
  *
  * Rule-level errors (see ../rule-error) are never baselined: they are the rule failing to check.
@@ -68,14 +69,15 @@ export function normalizeMessage(message: string): string {
 /**
  * The fingerprint of one result: its regex match, the source line it points at (`lineText`, when
  * it has one) and its message. The line matters with the match: two `console.log` calls in a file
- * match the same text, and replacing one must not pass as the other.
+ * match the same text, and replacing one must not pass as the other. A result that carries its
+ * own `fingerprint` (a command rule's result list) is identified by that alone.
  */
 export function fingerprintResult(result: CheckResult, lineText?: string): string {
-  const parts = [result.context?.matchedText ?? "", lineText ?? "", result.message];
-  return createHash("sha256")
-    .update([normalizeText(parts[0]!), normalizeText(parts[1]!), normalizeMessage(parts[2]!)].join("\u0000"))
-    .digest("hex")
-    .slice(0, 16);
+  const parts =
+    result.fingerprint !== undefined
+      ? ["fingerprint", result.fingerprint]
+      : [normalizeText(result.context?.matchedText ?? ""), normalizeText(lineText ?? ""), normalizeMessage(result.message)];
+  return createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 16);
 }
 
 /**

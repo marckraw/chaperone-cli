@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../../testing/fixtures";
 import type {
   CommandRule,
@@ -59,6 +61,64 @@ describe("file-pairing", () => {
     );
     expect(result.results[0]!.message).toContain("Could not transform");
   });
+
+  describe("pair.transform", () => {
+    // fan-stack.sb.ts must sit in FanStack/: the file's own path is its companion.
+    const FOLDER_RULE: FilePairingRule = {
+      ...RULE,
+      id: "schema-folder",
+      files: "src/components/**/*.sb.ts",
+      pair: {
+        from: "^src/components/(?:.+/)?((?<base>[a-z0-9]+(?:-[a-z0-9]+)*))\\.sb\\.ts$",
+        to: "src/components/$1/$<base>.sb.ts",
+        transform: { "1": "pascal" },
+      },
+    };
+
+    test("a kebab-case schema must sit in its PascalCase folder", async () => {
+      const cwd = makeProject({
+        "src/components/FanStack/fan-stack.sb.ts": "",
+        "src/components/Hero/hero.sb.ts": "",
+        "src/components/Cards/fan-card.sb.ts": "",
+        "src/components/FanCard.sb.ts": "",
+      });
+      const result = await runFilePairingRule(FOLDER_RULE, { cwd, ...OPTIONS });
+      expect(result.results.map((entry) => [entry.file, entry.message])).toEqual([
+        ["src/components/Cards/fan-card.sb.ts", "Missing companion file: src/components/FanCard/fan-card.sb.ts"],
+        ["src/components/FanCard.sb.ts", expect.stringContaining("Could not transform")],
+      ]);
+    });
+
+    test("a wrong-case folder fails, even where the filesystem ignores case", async () => {
+      const cwd = makeProject({ "src/components/Fancard/fan-card.sb.ts": "" });
+      // macOS by default: existsSync finds Fancard/ for FanCard/
+      const realExistsSync = fs.existsSync;
+      const caseInsensitive = spyOn(fs, "existsSync").mockImplementation((path) =>
+        realExistsSync(String(path)) || realExistsSync(String(path).replace("FanCard", "Fancard"))
+      );
+      try {
+        expect(fs.existsSync(join(cwd, "src/components/FanCard/fan-card.sb.ts"))).toBe(true);
+        const result = await runFilePairingRule(FOLDER_RULE, { cwd, ...OPTIONS });
+        expect(result.results.map((entry) => entry.message)).toEqual([
+          "Missing companion file: src/components/FanCard/fan-card.sb.ts",
+        ]);
+        // Also when the folder is outside the index, so only the filesystem can answer
+        const excluded = await runFilePairingRule(FOLDER_RULE, { cwd, include: [], exclude: ["src/components/Fancard/**"] });
+        expect(excluded.results).toEqual([]);
+      } finally {
+        caseInsensitive.mockRestore();
+      }
+    });
+
+    test("a single transform applies to every capture", async () => {
+      const cwd = makeProject({ "src/fan-stack.ts": "", "src/FanStack.test.ts": "", "src/hero.ts": "" });
+      const result = await runFilePairingRule(
+        { ...RULE, files: "src/*.ts", exclude: ["**/*.test.ts"], pair: { from: "([^/]+)\\.ts$", to: "$1.test.ts", transform: "pascal" } },
+        { cwd, ...OPTIONS }
+      );
+      expect(result.results.map((entry) => entry.context?.expectedValue)).toEqual(["src/Hero.test.ts"]);
+    });
+  });
 });
 
 describe("file-contract", () => {
@@ -68,6 +128,24 @@ describe("file-contract", () => {
     severity: "error",
     files: "src/**/*.ts",
   };
+
+  test("captureFromPath.transform converts the capture before {{capture}} substitution", async () => {
+    const cwd = makeProject({
+      "src/fan-stack.tsx.ts": "export const FanStack = () => null;\n",
+      "src/hero-banner.tsx.ts": "export const Hero = () => null;\n",
+    });
+    const result = await runFileContractRule(
+      {
+        ...RULE,
+        captureFromPath: { pattern: "([^/]+)\\.tsx\\.ts$", transform: "pascal" },
+        templatedRequiredPatterns: ["export const {{capture}}\\b"],
+      },
+      { cwd, ...OPTIONS }
+    );
+    expect(result.results.map((entry) => [entry.file, entry.context?.expectedValue])).toEqual([
+      ["src/hero-banner.tsx.ts", "/export const HeroBanner\\b/"],
+    ]);
+  });
 
   test("maxLines counts lines, not line breaks", async () => {
     const cwd = makeProject({ "src/three.ts": "a\nb\nc\n", "src/four.ts": "a\nb\nc\nd\n" });
@@ -206,6 +284,80 @@ describe("command", () => {
       { cwd: makeProject(), ...OPTIONS }
     );
     expect(result.results).toEqual([]);
+  });
+
+  describe('output: "results"', () => {
+    /** A command printing `output` as its stdout and exiting with `exitCode` */
+    const printing = (output: unknown, exitCode = 1): CommandRule => ({
+      ...RULE,
+      output: "results",
+      args: ["-e", `process.stdout.write(${JSON.stringify(typeof output === "string" ? output : JSON.stringify(output))}); process.exit(${exitCode})`],
+    });
+
+    test("each listed result is a violation at its own file, with its own fingerprint", async () => {
+      const cwd = makeProject();
+      const result = await runCommandRule(
+        printing({
+          results: [
+            { file: "src/components/FanStack/fan-stack.sb.ts", message: "FanStack is not placeable", fingerprint: "placeable:FanStack", line: 3 },
+            { file: join(cwd, "src/components/Hero/hero.sb.ts"), message: "Hero is not placeable", suggestion: "Add it to a slot" },
+          ],
+        }),
+        { cwd, ...OPTIONS }
+      );
+      expect(result.results).toMatchObject([
+        { file: "src/components/FanStack/fan-stack.sb.ts", line: 3, rule: "command/cmd", message: "FanStack is not placeable", fingerprint: "placeable:FanStack", severity: "error" },
+        { file: "src/components/Hero/hero.sb.ts", message: "Hero is not placeable", suggestion: "Add it to a slot" },
+      ]);
+      expect(result.results.some((entry) => entry.ruleError)).toBe(false);
+      expect(result.results[1]!.fingerprint).toBeUndefined();
+    });
+
+    test("paths are normalized to one form relative to the project", async () => {
+      const cwd = makeProject();
+      const files = ["./src/a.ts", "src//a.ts", "src/x/../a.ts", "src\\a.ts", join(cwd, "src/a.ts")];
+      const result = await runCommandRule(printing({ results: files.map((file) => ({ file, message: "x" })) }), { cwd, ...OPTIONS });
+      expect(result.results.map((entry) => entry.file)).toEqual(files.map(() => "src/a.ts"));
+    });
+
+    test.each(["../outside.ts", "src/../../outside.ts", "/elsewhere/outside.ts", "."])(
+      "a path outside the project is a rule error: %s",
+      async (file) => {
+        const result = await runCommandRule(printing({ results: [{ file, message: "x" }] }), { cwd: makeProject(), ...OPTIONS });
+        expect(result.results).toHaveLength(1);
+        expect(result.results[0]).toMatchObject({ ruleError: true });
+        expect(result.results[0]!.message).toContain("which is not a file in the project");
+      }
+    );
+
+    test("an empty list passes whatever the message, and rule.message prefixes each result", async () => {
+      expect((await runCommandRule(printing({ results: [] }, 0), { cwd: makeProject(), ...OPTIONS })).results).toEqual([]);
+      const result = await runCommandRule(
+        { ...printing({ results: [{ file: "a.ts", message: "broken" }] }), message: "Components must be placeable" },
+        { cwd: makeProject(), ...OPTIONS }
+      );
+      expect(result.results[0]!.message).toBe("Components must be placeable (broken)");
+    });
+
+    test.each([
+      ["", "stdout is empty"],
+      ["oops", "stdout is not JSON"],
+      [{ errors: [] }, 'stdout must be a JSON object with a "results" array'],
+      [{ results: [{ message: "x" }] }, 'results[0] needs a nonempty string "file"'],
+      [{ results: [{ file: "a.ts", message: "x", line: 0 }] }, 'results[0] has "line" 0'],
+      [{ results: [{ file: "a.ts", message: "x", fingerprint: 1 }] }, 'results[0] has "fingerprint" 1'],
+    ] as const)("a list it cannot read is a rule error: %p", async (output, reason) => {
+      const result = await runCommandRule({ ...printing(output), severity: "warning" }, { cwd: makeProject(), ...OPTIONS });
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0]).toMatchObject({ ruleError: true, severity: "error", file: ".chaperone.json" });
+      expect(result.results[0]!.message).toContain(reason);
+    });
+
+    test("an unexpected exit code with nothing listed is a rule error, not a pass", async () => {
+      const result = await runCommandRule(printing({ results: [] }, 2), { cwd: makeProject(), ...OPTIONS });
+      expect(result.results[0]).toMatchObject({ ruleError: true });
+      expect(result.results[0]!.message).toContain("exited with 2 (expected 0) but listed no results");
+    });
   });
 
   test("explains why a command could not run", async () => {

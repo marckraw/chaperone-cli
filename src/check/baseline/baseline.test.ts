@@ -56,6 +56,13 @@ describe("fingerprints", () => {
     expect(a).toBe(b);
   });
 
+  test("a fingerprint the rule gives replaces the computed one: message and line no longer count", () => {
+    const given = (overrides: Partial<CheckResult>) => fingerprintResult(result({ fingerprint: "placeable:FanStack", ...overrides }), "a");
+    expect(given({ message: "FanStack has no slot", line: 9 })).toBe(given({}));
+    expect(given({ fingerprint: "placeable:Hero" })).not.toBe(given({}));
+    expect(given({})).not.toBe(fingerprintResult(result(), "a"));
+  });
+
   test("change when the offending line changes", () => {
     expect(fingerprintResult(result(), "console.log(a);")).not.toBe(fingerprintResult(result(), "console.log(b);"));
   });

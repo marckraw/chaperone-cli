@@ -19,6 +19,11 @@ export interface CheckResult {
    * Set it with `ruleError()` from ./rule-error.
    */
   ruleError?: true;
+  /**
+   * The violation's identity, when the rule knows it better than its text does (a command rule's
+   * result list). Replaces the computed baseline fingerprint.
+   */
+  fingerprint?: string;
   // Additional context for debugging/fixing
   context?: {
     matchedText?: string; // For regex: the text that matched
@@ -170,12 +175,17 @@ export interface AIGeneratedMetadata {
  * File pairing rule - map each matched file path to a companion path and enforce existence/non-existence
  * Also supports simple $1-style transforms (legacy file-naming syntax)
  */
+/** A case a path capture is converted to: `fan-stack` → `FanStack`, `fanStack`, `fan-stack`, `fan_stack` */
+export type CaseTransform = "pascal" | "camel" | "kebab" | "snake";
+
 export interface FilePairingRule extends BaseRule, AIGeneratedMetadata {
   type: "file-pairing";
   files: string; // Glob for source files
   pair: {
     from: string; // Regex pattern applied to relative file path
     to: string; // Replacement string
+    /** Case transform for the captures `to` substitutes: every group, or by group number/name */
+    transform?: CaseTransform | Record<string, CaseTransform>;
   };
   mustExist?: boolean; // true = companion must exist, false = companion must NOT exist
   requireTransformMatch?: boolean; // true = rule errors when pair.from doesn't match a file path
@@ -211,6 +221,7 @@ export interface FileContractRule extends BaseRule, AIGeneratedMetadata {
     pattern: string; // Regex pattern applied to file path or basename
     group?: number | string; // Capture group index or named group
     source?: "path" | "basename"; // Defaults to path
+    transform?: CaseTransform; // Case the capture is converted to before {{capture}} substitution
   };
   templatedRequiredPatterns?: string[]; // Supports {{capture}} placeholder
   templatedRequiredAnyPatterns?: string[]; // Supports {{capture}} placeholder
@@ -281,6 +292,8 @@ export interface CommandRule extends BaseRule, AIGeneratedMetadata {
   expectedExitCode?: number; // Optional expected exit code (default: 0)
   stdoutPattern?: string; // Optional regex that stdout must match
   stderrPattern?: string; // Optional regex that stderr must match
+  /** "results": stdout is a JSON result list, each result reported (and baselined) on its own */
+  output?: "results";
   message?: string;
 }
 
@@ -455,6 +468,8 @@ export interface RegisteredInMapRule extends BaseRule, AIGeneratedMetadata {
   mapExport?: string;
   /** Default export, or the sole named export, in each schema file. */
   schemaExport?: string;
+  /** JSON file mapping schema names to the reason they are not in the map; listed names pass */
+  exceptionsFile?: string;
   message?: string;
 }
 

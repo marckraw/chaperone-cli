@@ -65,11 +65,16 @@ Use for file naming conventions and required companion files.
 **Optional fields:**
 - mustExist: true (companion must exist, default) or false (companion must NOT exist)
 - requireTransformMatch: true to error when pair.from doesn't match
+- pair.transform: case transform for the captures pair.to substitutes ($1, $<name>): "pascal", "camel",
+  "kebab" or "snake" for every group, or an object by group number or name, e.g. { "1": "pascal" }
 - message: error message
 
 **Examples:**
 - "Every .tsx component needs a .test.tsx file" → files: "src/**/*.tsx", pair: { from: "\\.tsx$", to: ".test.tsx" }
 - "Every .pure.ts file needs a .pure.test.ts file" → files: "src/**/*.pure.ts", pair: { from: "\\.pure\\.ts$", to: ".pure.test.ts" }
+- "fan-stack.sb.ts lives in a FanStack/ folder" → files: "src/components/**/*.sb.ts",
+  pair: { from: "^src/components/(?:.+/)?((?<base>[a-z0-9]+(?:-[a-z0-9]+)*))\\.sb\\.ts$", to: "src/components/$1/$<base>.sb.ts", transform: { "1": "pascal" } }
+  (the file is its own companion: in the wrong folder, the companion path does not exist)
 
 ### 3. "file-contract" - Per-file Content Contracts
 
@@ -85,6 +90,10 @@ satisfy structural assertions.
 **Assertions (optional object):** firstLine (regex), mustExportDefault, mustExportNamed,
 mustImport / mustNotImport (module names, * wildcard), maxLines, minLines, mustHaveJSDoc,
 maxExports, mustBeModule
+
+**Path captures (optional):** captureFromPath: { pattern, group?, source?: "path" | "basename",
+transform?: "pascal" | "camel" | "kebab" | "snake" } captures part of the path, which
+templatedRequiredPatterns / templatedRequiredAnyPatterns / templatedForbiddenPatterns use as {{capture}}
 
 **Example:**
 - "Presentational components must not use useEffect" → files: "src/**/*.presentational.tsx", forbiddenPatterns: ["\\buseEffect\\s*\\("]
@@ -152,6 +161,9 @@ Use for invariants that are best validated by running a command.
 - expectedExitCode: expected command exit code (default 0)
 - stdoutPattern: regex that stdout must match
 - stderrPattern: regex that stderr must match
+- output: "results" when the command prints a JSON result list on stdout,
+  { "results": [{ "file", "message", "fingerprint"?, "line"?, "column"?, "suggestion"? }] },
+  so each violation is reported and baselined on its own (not with stdoutPattern/stderrPattern)
 - message: custom error message
 
 ### 7. "symbol-reference" - Export Reference Coverage
