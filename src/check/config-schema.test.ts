@@ -140,6 +140,35 @@ describe("validateRule", () => {
     ).toContain("defines nothing to check");
   });
 
+  test("accepts the 0.12 options: exceptionsFile, capture transforms and command result lists", () => {
+    const valid = [
+      { ...VALID_RULES["registered-in-map"], exceptionsFile: "src/components/component-map.exceptions.json" },
+      { ...VALID_RULES["file-contract"], captureFromPath: { pattern: "([^/]+)\\.ts$", transform: "pascal" } },
+      { ...VALID_RULES["file-pairing"], pair: { from: "(a)(?<b>b)", to: "$1$<b>", transform: { "1": "pascal", b: "kebab" } } },
+      { ...VALID_RULES["file-pairing"], pair: { from: "(a)", to: "$1", transform: "snake" } },
+      { ...VALID_RULES.command, output: "results" },
+    ];
+    for (const rule of valid) expect(validateRule(rule, ".chaperone.json", PATH).diagnostics).toEqual([]);
+  });
+
+  test("rejects an unknown case transform with a suggestion", () => {
+    const errors = errorsOf({ ...VALID_RULES["file-contract"], captureFromPath: { pattern: "(a)", transform: "Pascal" } });
+    expect(errors[0]!.message).toContain('must be one of "pascal", "camel", "kebab", "snake"');
+    expect(errors[0]!.message).toContain('did you mean "pascal"');
+  });
+
+  test("rejects a pair.transform naming a group pair.from does not have", () => {
+    const errors = errorsOf({ ...VALID_RULES["file-pairing"], pair: { from: "(a)(?<b>b)", to: "$1", transform: { "3": "pascal", c: "kebab" } } });
+    expect(errors.map((error) => error.message)).toEqual([
+      expect.stringContaining('"pair.transform" names group "3", which "pair.from" does not have'),
+      expect.stringContaining('"pair.transform" names group "c", which "pair.from" does not have'),
+    ]);
+  });
+
+  test("rejects a command output other than results", () => {
+    expect(errorsOf({ ...VALID_RULES.command, output: "json" })[0]!.message).toContain('"output" must be "results"');
+  });
+
   test("rejects maxComponents below 1", () => {
     expect(errorsOf({ ...VALID_RULES["react-component-count"], maxComponents: 0 })[0]!.message).toContain(
       "at least 1"

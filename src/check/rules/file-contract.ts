@@ -3,6 +3,7 @@ import { countLines } from "../../utils/text";
 import type { CheckResult, FileContractRule, FileContractAssertions } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import type { ImportEntry } from "./utils/import-extractor";
+import { transformCase } from "./utils/captures";
 import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
@@ -59,7 +60,8 @@ function resolveCapture(
     };
   }
 
-  return { value: captured, error: null };
+  const transform = rule.captureFromPath.transform;
+  return { value: transform ? transformCase(captured, transform) : captured, error: null };
 }
 
 function expandTemplatedPatterns(patterns: string[], capture: string | null): string[] {

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CheckResult, FilePairingRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { replaceWithTransforms } from "./utils/captures";
 import { getRuleContext } from "./utils/rule-context";
 
 function compileRegex(pattern: string): RegExp | null {
@@ -43,8 +44,11 @@ export async function runFilePairingRule(
   const requireTransformMatch = rule.requireTransformMatch ?? true;
 
   for (const file of context.inScope(files)) {
-    const transformed = file.replace(transformRegex, rule.pair.to);
-    const didTransform = transformed !== file;
+    const { transform } = rule.pair;
+    const transformed = transform
+      ? replaceWithTransforms(file, transformRegex, rule.pair.to, transform)
+      : file.replace(transformRegex, rule.pair.to);
+    const didTransform = transformRegex.test(file);
 
     if (!didTransform && requireTransformMatch) {
       results.push({

@@ -1,7 +1,8 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { execCommand } from "../../utils/process";
 import type { CheckResult, CommandRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
+import { findingMessage } from "./utils/findings";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_EXPECTED_EXIT_CODE = 0;
@@ -28,6 +29,76 @@ function formatCommandOutput(stdout: string, stderr: string): string | undefined
   }
 
   return `${combined.slice(0, MAX_OUTPUT_LENGTH)}\n... output truncated ...`;
+}
+
+/** One violation a command reports with `output: "results"` */
+export interface CommandResultEntry {
+  /** Relative to the project root (an absolute path inside the project is made relative) */
+  file: string;
+  message: string;
+  /** The violation's identity for the baseline; computed from the message and line when omitted */
+  fingerprint?: string;
+  line?: number;
+  column?: number;
+  suggestion?: string;
+}
+
+const isPositiveInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 1;
+
+/**
+ * The result list a command printed: `{ "results": [{ "file", "message", "fingerprint"? }] }`.
+ * Pure. Returns the reason when stdout is not such a list.
+ */
+export function parseCommandResults(
+  stdout: string,
+  projectRoot: string
+): { results: CommandResultEntry[] } | { error: string } {
+  let data: unknown;
+  try {
+    data = JSON.parse(stdout);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { error: stdout.trim() ? `stdout is not JSON (${detail})` : "stdout is empty" };
+  }
+  const list = typeof data === "object" && data !== null ? (data as { results?: unknown }).results : undefined;
+  if (!Array.isArray(list)) {
+    return { error: 'stdout must be a JSON object with a "results" array' };
+  }
+
+  const results: CommandResultEntry[] = [];
+  for (const [index, item] of list.entries()) {
+    const where = `results[${index}]`;
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { error: `${where} must be an object` };
+    }
+    const entry = item as Record<string, unknown>;
+    for (const field of ["file", "message"] as const) {
+      if (typeof entry[field] !== "string" || entry[field] === "") {
+        return { error: `${where} needs a nonempty string "${field}"` };
+      }
+    }
+    for (const field of ["fingerprint", "suggestion"] as const) {
+      if (entry[field] !== undefined && typeof entry[field] !== "string") {
+        return { error: `${where} has "${field}" ${JSON.stringify(entry[field])}; it must be a string` };
+      }
+    }
+    for (const field of ["line", "column"] as const) {
+      if (entry[field] !== undefined && !isPositiveInteger(entry[field])) {
+        return { error: `${where} has "${field}" ${JSON.stringify(entry[field])}; it must be a whole number of at least 1` };
+      }
+    }
+    const file = entry["file"] as string;
+    results.push({
+      file: (isAbsolute(file) ? relative(projectRoot, file) : file).split("\\").join("/"),
+      message: entry["message"] as string,
+      ...(entry["fingerprint"] !== undefined && { fingerprint: entry["fingerprint"] as string }),
+      ...(entry["line"] !== undefined && { line: entry["line"] as number }),
+      ...(entry["column"] !== undefined && { column: entry["column"] as number }),
+      ...(entry["suggestion"] !== undefined && { suggestion: entry["suggestion"] as string }),
+    });
+  }
+  return { results };
 }
 
 /**
@@ -74,7 +145,43 @@ export async function runCommandRule(
     return { ruleId: rule.id, results };
   }
 
-  if (exitCode !== expectedExitCode) {
+  if (rule.output === "results") {
+    // Each listed result is a violation of its own, baselined on its own. A list that cannot be
+    // read, or an unexpected exit code with nothing listed, means the command could not check.
+    const parsed = parseCommandResults(stdout, options.cwd);
+    const cannotCheck =
+      "error" in parsed
+        ? `Cannot read results from "${commandDisplay}": ${parsed.error}`
+        : parsed.results.length === 0 && exitCode !== expectedExitCode
+          ? `Command "${commandDisplay}" exited with ${exitCode} (expected ${expectedExitCode}) but listed no results`
+          : null;
+    if (cannotCheck) {
+      results.push({
+        file: RESULT_FILE,
+        rule: `command/${rule.id}`,
+        message: cannotCheck,
+        ruleError: true,
+        severity: "error",
+        source: "custom",
+        context: { command: commandDisplay, exitCode, commandOutput },
+      });
+    } else if ("results" in parsed) {
+      for (const entry of parsed.results) {
+        results.push({
+          file: entry.file,
+          line: entry.line,
+          column: entry.column,
+          rule: `command/${rule.id}`,
+          message: findingMessage(rule.message, entry.message),
+          severity: rule.severity,
+          source: "custom",
+          suggestion: entry.suggestion ?? `Run directly for details: ${commandDisplay}`,
+          ...(entry.fingerprint !== undefined && { fingerprint: entry.fingerprint }),
+          context: { command: commandDisplay },
+        });
+      }
+    }
+  } else if (exitCode !== expectedExitCode) {
     results.push({
       file: RESULT_FILE,
       rule: `command/${rule.id}`,

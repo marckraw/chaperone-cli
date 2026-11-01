@@ -360,6 +360,74 @@ describe("chaperone baseline", () => {
     });
   });
 
+  describe("a command rule's result list", () => {
+    // Stands in for `bb check placeable`: prints results.json, and exits 1 unless it lists nothing.
+    const PLACEABLE = {
+      type: "command",
+      id: "placeable",
+      severity: "error",
+      command: process.execPath,
+      args: [
+        "-e",
+        'const text = require("fs").readFileSync("results.json", "utf8"); process.stdout.write(text); ' +
+          "let listed = 1; try { listed = JSON.parse(text).results.length; } catch {} process.exit(listed ? 1 : 0);",
+      ],
+      output: "results",
+    };
+    const result = (component: string, message = `${component} is not placeable`) => ({
+      file: `src/components/${component}/${component}.sb.ts`,
+      message,
+      fingerprint: `placeable:${component}`,
+    });
+    const listing = (...results: unknown[]) => JSON.stringify({ results });
+
+    test("baselining one result does not hide a second one", () => {
+      const cwd = projectWithRules([PLACEABLE], { "results.json": listing(result("FanStack")) });
+      const created = runCli(["baseline"], cwd);
+      expect(created.exitCode).toBe(0);
+      expect(created.stdout).toContain("+ command/placeable  src/components/FanStack/FanStack.sb.ts  FanStack is not placeable");
+      expect(runCli(["check"], cwd).exitCode).toBe(0);
+
+      // Its message changed, but its fingerprint did not: still baselined. Hero is new.
+      writeFileSync(join(cwd, "results.json"), listing(result("FanStack", "FanStack has no slot"), result("Hero")));
+      const check = runCli(["check", "--format", "json"], cwd);
+      expect(check.exitCode).toBe(1);
+      const json = JSON.parse(check.stdout);
+      expect(json.results.map((entry: { file: string }) => entry.file)).toEqual(["src/components/Hero/Hero.sb.ts"]);
+      expect(json.baseline.baselined.results.map((entry: { file: string }) => entry.file)).toEqual([
+        "src/components/FanStack/FanStack.sb.ts",
+      ]);
+
+      // The baseline only shrinks: Hero is refused, not recorded
+      const refused = runCli(["baseline"], cwd);
+      expect(refused.exitCode).toBe(1);
+      expect(readBaseline(cwd).entries.map((entry) => entry.file)).toEqual(["src/components/FanStack/FanStack.sb.ts"]);
+
+      // Fixing FanStack makes its entry stale, and baseline removes it
+      writeFileSync(join(cwd, "results.json"), listing());
+      const fixed = runCli(["check", "--format", "json"], cwd);
+      expect(fixed.exitCode).toBe(0);
+      expect(JSON.parse(fixed.stdout).baseline.stale.map((entry: { file: string }) => entry.file)).toEqual([
+        "src/components/FanStack/FanStack.sb.ts",
+      ]);
+      expect(runCli(["baseline"], cwd).exitCode).toBe(0);
+      expect(readBaseline(cwd).entries).toEqual([]);
+    });
+
+    test("a list the command cannot produce leaves its entries unverified", () => {
+      const cwd = projectWithRules([PLACEABLE], { "results.json": listing(result("FanStack")) });
+      expect(runCli(["baseline"], cwd).exitCode).toBe(0);
+      writeFileSync(join(cwd, "results.json"), "Error: cannot load the component map");
+      const check = runCli(["check", "--format", "json"], cwd);
+      expect(check.exitCode).toBe(1);
+      const json = JSON.parse(check.stdout);
+      expect(json.results[0].message).toContain("Cannot read results");
+      expect(json.baseline.stale).toEqual([]);
+      expect(json.baseline.unverified.map((entry: { file: string }) => entry.file)).toEqual(["src/components/FanStack/FanStack.sb.ts"]);
+      expect(runCli(["baseline"], cwd).exitCode).toBe(2);
+    });
+  });
+
   test("--no-baseline reports every violation", () => {
     const cwd = legacyProject();
     const run = runCli(["check", "--no-baseline"], cwd);
