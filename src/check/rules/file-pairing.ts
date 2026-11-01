@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { existsCaseExact } from "../../utils/fs";
 import type { CheckResult, FilePairingRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
 import { replaceWithTransforms } from "./utils/captures";
@@ -67,8 +68,11 @@ export async function runFilePairingRule(
       continue;
     }
 
-    // The companion may live in an excluded directory, so fall back to the filesystem.
-    const companionExists = index.has(transformed) || existsSync(join(cwd, transformed));
+    // The companion may live in an excluded directory, so fall back to the filesystem. With a
+    // case transform the case is the point, and a case-insensitive filesystem (macOS) would find
+    // Fancard/ for FanCard/, passing locally what fails on Linux CI: only an exact name counts.
+    const companionExists =
+      index.has(transformed) || (transform ? existsCaseExact(cwd, transformed) : existsSync(join(cwd, transformed)));
 
     if (mustExist && !companionExists) {
       results.push({

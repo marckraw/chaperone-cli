@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, posix, relative, resolve } from "node:path";
 import { execCommand } from "../../utils/process";
 import type { CheckResult, CommandRule } from "../types";
 import type { RuleResult, RuleRunnerOptions } from "./types";
@@ -33,7 +33,7 @@ function formatCommandOutput(stdout: string, stderr: string): string | undefined
 
 /** One violation a command reports with `output: "results"` */
 export interface CommandResultEntry {
-  /** Relative to the project root (an absolute path inside the project is made relative) */
+  /** Relative to the project root and normalized; an absolute path inside the project is made relative */
   file: string;
   message: string;
   /** The violation's identity for the baseline; computed from the message and line when omitted */
@@ -45,6 +45,19 @@ export interface CommandResultEntry {
 
 const isPositiveInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 1;
+
+/**
+ * A result's file as a normalized POSIX path relative to the project root, so `./src/a.ts`,
+ * `src//a.ts` and the absolute path are one baseline entry. Null when it is outside the project.
+ */
+function projectPath(file: string, projectRoot: string): string | null {
+  const relativePath = isAbsolute(file) ? relative(projectRoot, file) : file;
+  const normalized = posix.normalize(relativePath.split("\\").join("/"));
+  if (normalized === ".." || normalized.startsWith("../") || posix.isAbsolute(normalized) || isAbsolute(normalized)) {
+    return null;
+  }
+  return normalized;
+}
 
 /**
  * The result list a command printed: `{ "results": [{ "file", "message", "fingerprint"? }] }`.
@@ -88,9 +101,12 @@ export function parseCommandResults(
         return { error: `${where} has "${field}" ${JSON.stringify(entry[field])}; it must be a whole number of at least 1` };
       }
     }
-    const file = entry["file"] as string;
+    const file = projectPath(entry["file"] as string, projectRoot);
+    if (file === null || file === ".") {
+      return { error: `${where} has "file" ${JSON.stringify(entry["file"])}, which is not a file in the project` };
+    }
     results.push({
-      file: (isAbsolute(file) ? relative(projectRoot, file) : file).split("\\").join("/"),
+      file,
       message: entry["message"] as string,
       ...(entry["fingerprint"] !== undefined && { fingerprint: entry["fingerprint"] as string }),
       ...(entry["line"] !== undefined && { line: entry["line"] as number }),

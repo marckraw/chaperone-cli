@@ -414,6 +414,34 @@ describe("chaperone baseline", () => {
       expect(readBaseline(cwd).entries).toEqual([]);
     });
 
+    test("without a fingerprint, two results in one file are two entries, matched by message and line", () => {
+      const FILE = "src/components/FanStack/fan-stack.sb.ts";
+      const unnamed = (message: string, line?: number) => ({ file: FILE, message, ...(line && { line }) });
+      const cwd = projectWithRules([PLACEABLE], {
+        [FILE]: 'export default {\n  name: "fan-stack",\n  slots: [],\n};\n',
+        "results.json": listing(unnamed("FanStack is not placeable", 2)),
+      });
+      expect(runCli(["baseline"], cwd).exitCode).toBe(0);
+
+      // A second result in the same file is new; the first stays baselined
+      writeFileSync(join(cwd, "results.json"), listing(unnamed("FanStack has no slots", 3), unnamed("FanStack is not placeable", 2)));
+      let json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
+      expect(json.results.map((entry: { message: string }) => entry.message)).toEqual(["FanStack has no slots"]);
+      expect(json.baseline.baselined.results.map((entry: { message: string }) => entry.message)).toEqual(["FanStack is not placeable"]);
+
+      // Both recorded: two entries in one file
+      expect(runCli(["baseline", "--allow-growth"], cwd).exitCode).toBe(0);
+      expect(readBaseline(cwd).entries.map((entry) => entry.file)).toEqual([FILE, FILE]);
+      expect(runCli(["check"], cwd).exitCode).toBe(0);
+
+      // Moving a result keeps it baselined while its line's text is the same; rewording one makes it new
+      writeFileSync(join(cwd, FILE), '// moved\nexport default {\n  name: "fan-stack",\n  slots: [],\n};\n');
+      writeFileSync(join(cwd, "results.json"), listing(unnamed("FanStack is not placeable", 3), unnamed("FanStack has no slot at all", 4)));
+      json = JSON.parse(runCli(["check", "--format", "json"], cwd).stdout);
+      expect(json.results.map((entry: { message: string }) => entry.message)).toEqual(["FanStack has no slot at all"]);
+      expect(json.baseline.stale.map((entry: { message: string }) => entry.message)).toEqual(["FanStack has no slots"]);
+    });
+
     test("a list the command cannot produce leaves its entries unverified", () => {
       const cwd = projectWithRules([PLACEABLE], { "results.json": listing(result("FanStack")) });
       expect(runCli(["baseline"], cwd).exitCode).toBe(0);

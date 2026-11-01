@@ -650,6 +650,16 @@ function checkRuleSemantics(rule: Record<string, unknown>, type: RuleType, sink:
     case "command":
       regex(["stdoutPattern"]);
       regex(["stderrPattern"]);
+      if (rule["output"] === "results") {
+        for (const field of ["stdoutPattern", "stderrPattern"]) {
+          if (rule[field] !== undefined) {
+            sink.error(
+              `"${field}" cannot be combined with "output": "results": the result list is the verdict, so list every violation in it`,
+              [field]
+            );
+          }
+        }
+      }
       break;
     case "symbol-reference":
       glob(["sourceFiles"]);

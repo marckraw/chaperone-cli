@@ -462,7 +462,7 @@ Map each matched file to a companion path and require (or forbid) it.
 ```
 
 - `pair.from` (regex, applied to the relative path) and `pair.to` (replacement) are required. `pair.to` uses the syntax of JavaScript's `String.prototype.replace`: `$1`, `$<name>`, `$&`, `$$`.
-- `pair.transform` (optional): a case transform for the captures `pair.to` substitutes, `"pascal"`, `"camel"`, `"kebab"` or `"snake"`. A single value transforms every group. An object transforms the groups it names, by number for `$1` or by name for `$<name>`: `{ "1": "pascal" }`. Words are split at `-`, `_`, spaces and case changes, so `fan-stack`, `fan_stack` and `fanStack` all become `FanStack`. Naming a group `pair.from` does not have is a configuration error.
+- `pair.transform` (optional): a case transform for the captures `pair.to` substitutes, `"pascal"`, `"camel"`, `"kebab"` or `"snake"`. A single value transforms every group. An object transforms the groups it names, by number for `$1` or by name for `$<name>`: `{ "1": "pascal" }`. Words are split at `-`, `_`, spaces and case changes, so `fan-stack`, `fan_stack` and `fanStack` all become `FanStack`. Digits stay in their word, without a split before or after: `sb-2col-grid` becomes `Sb2colGrid`. An acronym is one word, and only its first letter stays capital: `HTMLParser` becomes `HtmlParser`, so a folder named `HTMLParser/` does not match. Naming a group `pair.from` does not have is a configuration error. With `pair.transform`, the companion must exist with exactly that case, even on a filesystem that ignores case (macOS and Windows by default): `Fancard/` does not count for `FanCard/`, so a check that passes locally also passes on Linux CI.
 - `mustExist` (default `true`): `false` forbids the companion.
 - `requireTransformMatch` (default `true`): report files that `pair.from` does not match.
 
@@ -506,7 +506,7 @@ Deterministic content contracts per file, including filename-derived placeholder
 | Field | Description |
 |-------|-------------|
 | `requiredPatterns` / `requiredAnyPatterns` / `forbiddenPatterns` | Regex lists: all must match / at least one must match / none may match. |
-| `captureFromPath` | `{ pattern, group?, source?: "path" \| "basename", transform? }` captures part of the path for `{{capture}}`. `transform` converts the capture to `"pascal"`, `"camel"`, `"kebab"` or `"snake"` case first: `fan-stack.tsx` with `"transform": "pascal"` substitutes `FanStack`. |
+| `captureFromPath` | `{ pattern, group?, source?: "path" \| "basename", transform? }` captures part of the path for `{{capture}}`. `transform` converts the capture to `"pascal"`, `"camel"`, `"kebab"` or `"snake"` case first: `fan-stack.tsx` with `"transform": "pascal"` substitutes `FanStack`. Words split as for [`pair.transform`](#file-pairing). |
 | `templatedRequiredPatterns` / `templatedRequiredAnyPatterns` / `templatedForbiddenPatterns` | Same as above with `{{capture}}` (escaped) substituted. |
 | `assertions` | See below. |
 
@@ -606,7 +606,7 @@ Without `output`, a failing command is one violation at `.chaperone.json`. A bas
 }
 ```
 
-The command prints one JSON object to stdout:
+The command prints one JSON object to stdout, and nothing else. Logs, progress and warnings go to stderr: any other text on stdout makes the list unreadable, which is a rule-level error (see below).
 
 ```json
 {
@@ -623,13 +623,13 @@ The command prints one JSON object to stdout:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `file` | Yes | The file the violation is in, relative to the project root. An absolute path inside the project is made relative. |
+| `file` | Yes | The file the violation is in, relative to the project root. Paths are normalized, so `./src/a.ts`, `src//a.ts` and the absolute path are one file. A path outside the project is a rule-level error. |
 | `message` | Yes | What is wrong. With the rule's own `message`, it is reported as `message (this message)`. |
 | `fingerprint` | No | The violation's identity for the baseline, such as the component name. With it, the entry survives the message being reworded or the line moving. Without it, the fingerprint is computed from the message and the line's text, as for native rules. |
 | `line` / `column` | No | 1-based position. |
 | `suggestion` | No | How to fix it. Defaults to running the command directly. |
 
-Other fields are ignored. Every result takes the rule's `severity`. An empty list passes. The exit code does not change what is reported, so a command may exit 1 when it lists violations. A command that cannot check cannot list results, and that is a rule-level error, not a violation: the error is reported, the rule's baseline entries are kept as unverified, and `chaperone baseline` exits 2 without writing. This covers stdout that is not such an object, a result without `file` or `message`, and a different exit code with an empty list.
+Other fields are ignored. Every result takes the rule's `severity`. `stdoutPattern` and `stderrPattern` cannot be combined with `"output": "results"`, since the list is the verdict. An empty list passes. The exit code does not change what is reported, so a command may exit 1 when it lists violations. A command that cannot check cannot list results, and that is a rule-level error, not a violation: the error is reported, the rule's baseline entries are kept as unverified, and `chaperone baseline` exits 2 without writing. This covers stdout that is not such an object, a result without `file` or `message`, and a different exit code with an empty list.
 
 ### `symbol-reference`
 

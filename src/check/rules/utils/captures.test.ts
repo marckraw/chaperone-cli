@@ -13,6 +13,9 @@ describe("transformCase", () => {
     expect(splitWords("HTMLParser")).toEqual(["html", "parser"]);
     expect(transformCase("hero-2-col", "pascal")).toBe("Hero2Col");
     expect(transformCase("hero2col", "kebab")).toBe("hero2col");
+    // The edges the README documents
+    expect(transformCase("sb-2col-grid", "pascal")).toBe("Sb2colGrid");
+    expect(transformCase("HTMLParser", "pascal")).toBe("HtmlParser");
   });
 });
 

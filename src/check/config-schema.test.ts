@@ -165,6 +165,14 @@ describe("validateRule", () => {
     ]);
   });
 
+  test("rejects stdoutPattern and stderrPattern with output: results", () => {
+    const errors = errorsOf({ ...VALID_RULES.command, output: "results", stdoutPattern: "ok", stderrPattern: "^$" });
+    expect(errors.map((error) => error.message)).toEqual([
+      expect.stringContaining('"stdoutPattern" cannot be combined with "output": "results"'),
+      expect.stringContaining('"stderrPattern" cannot be combined with "output": "results"'),
+    ]);
+  });
+
   test("rejects a command output other than results", () => {
     expect(errorsOf({ ...VALID_RULES.command, output: "json" })[0]!.message).toContain('"output" must be "results"');
   });

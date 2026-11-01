@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { join } from "node:path";
 import { cleanupProjects, makeProject } from "../../testing/fixtures";
 import type {
@@ -86,6 +87,27 @@ describe("file-pairing", () => {
         ["src/components/Cards/fan-card.sb.ts", "Missing companion file: src/components/FanCard/fan-card.sb.ts"],
         ["src/components/FanCard.sb.ts", expect.stringContaining("Could not transform")],
       ]);
+    });
+
+    test("a wrong-case folder fails, even where the filesystem ignores case", async () => {
+      const cwd = makeProject({ "src/components/Fancard/fan-card.sb.ts": "" });
+      // macOS by default: existsSync finds Fancard/ for FanCard/
+      const realExistsSync = fs.existsSync;
+      const caseInsensitive = spyOn(fs, "existsSync").mockImplementation((path) =>
+        realExistsSync(String(path)) || realExistsSync(String(path).replace("FanCard", "Fancard"))
+      );
+      try {
+        expect(fs.existsSync(join(cwd, "src/components/FanCard/fan-card.sb.ts"))).toBe(true);
+        const result = await runFilePairingRule(FOLDER_RULE, { cwd, ...OPTIONS });
+        expect(result.results.map((entry) => entry.message)).toEqual([
+          "Missing companion file: src/components/FanCard/fan-card.sb.ts",
+        ]);
+        // Also when the folder is outside the index, so only the filesystem can answer
+        const excluded = await runFilePairingRule(FOLDER_RULE, { cwd, include: [], exclude: ["src/components/Fancard/**"] });
+        expect(excluded.results).toEqual([]);
+      } finally {
+        caseInsensitive.mockRestore();
+      }
     });
 
     test("a single transform applies to every capture", async () => {
@@ -290,6 +312,23 @@ describe("command", () => {
       expect(result.results.some((entry) => entry.ruleError)).toBe(false);
       expect(result.results[1]!.fingerprint).toBeUndefined();
     });
+
+    test("paths are normalized to one form relative to the project", async () => {
+      const cwd = makeProject();
+      const files = ["./src/a.ts", "src//a.ts", "src/x/../a.ts", "src\\a.ts", join(cwd, "src/a.ts")];
+      const result = await runCommandRule(printing({ results: files.map((file) => ({ file, message: "x" })) }), { cwd, ...OPTIONS });
+      expect(result.results.map((entry) => entry.file)).toEqual(files.map(() => "src/a.ts"));
+    });
+
+    test.each(["../outside.ts", "src/../../outside.ts", "/elsewhere/outside.ts", "."])(
+      "a path outside the project is a rule error: %s",
+      async (file) => {
+        const result = await runCommandRule(printing({ results: [{ file, message: "x" }] }), { cwd: makeProject(), ...OPTIONS });
+        expect(result.results).toHaveLength(1);
+        expect(result.results[0]).toMatchObject({ ruleError: true });
+        expect(result.results[0]!.message).toContain("which is not a file in the project");
+      }
+    );
 
     test("an empty list passes whatever the message, and rule.message prefixes each result", async () => {
       expect((await runCommandRule(printing({ results: [] }, 0), { cwd: makeProject(), ...OPTIONS })).results).toEqual([]);
